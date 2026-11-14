@@ -27,7 +27,7 @@ Requests run with `spawn(executable, argv, {shell:false})`, in a new empty tempo
 
 Without `--output-schema`, the JSON schema is included in the prompt and the final response is parsed as strict JSON and validated locally. Without `--output-last-message`, only the final completed `agent_message` event is considered as final output. Arbitrary events and tool output are never interpreted as a proposal. Malformed streams, nonzero exit, authentication errors, quota errors, timeout and cancellation reject the request before database application.
 
-Account quota beyond the synthetic check below, future authentication expiry, production notification permissions, and macOS behavior cannot be established by CLI help. Automated adapter tests simulate process streams and errors. No paid inference was used for capability detection. macOS users must separately install/login to Codex on their Mac, or run the app on the company desktop with its local CLI; this MVP does not silently bridge a Mac app to remote credentials or provide an SSH AI service.
+Account quota beyond the synthetic check below, future authentication expiry, production notification permissions, and macOS behavior cannot be established by CLI help. Automated adapter tests simulate process streams and errors. No paid inference was used for capability detection. Local AI mode requires Codex installed and logged in on the same computer. The explicitly configured [SSH transport](ssh-codex.md) lets the Mac client use the company computer’s Codex through a bounded Python helper. Credentials stay on their original computer; this is not database synchronization or a public AI service.
 
 ## Real integration smoke, 2026-11-14
 

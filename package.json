@@ -19,7 +19,9 @@
     "package:linux": "npm run build && electron-builder --linux --dir",
     "package:mac:linux": "npm run build && node scripts/package-mac-linux.mjs",
     "test:headless": "bash scripts/smoke-headless.sh",
-    "verify": "npm run build && npm test && npm run test:smoke"
+    "verify": "npm run build && npm test && npm run test:smoke",
+    "test:ssh-runner": "python3 -m unittest discover -s tests -p test_ssh_runner.py",
+    "test:ssh-desktop": "node tests/ssh-desktop-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "0.468.0",
