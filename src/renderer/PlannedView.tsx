@@ -298,7 +298,7 @@ export default function PlannedView({
       const resize = () =>
         setDayLimit(
           Math.max(
-            1,
+            0,
             Math.min(3, Math.floor((node.clientHeight / 6 - 48) / 26)),
           ),
         );

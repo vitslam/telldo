@@ -179,7 +179,6 @@ export default function App() {
     [selected, setSelected] = useState<string | null>(null),
     [newTask, setNewTask] = useState(""),
     [speech, setSpeech] = useState(""),
-    [composerOpen, setComposerOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [progress, setProgress] = useState(""),
     [error, setError] = useState(""),
@@ -202,7 +201,7 @@ export default function App() {
     { start: string; end: string; zone: string } | undefined
   >(undefined);
   const searchInput = useRef<HTMLInputElement>(null);
-  const speechInput = useRef<HTMLInputElement>(null);
+  const speechInput = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (document.querySelector(".overlay")) return;
@@ -213,7 +212,7 @@ export default function App() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
-        setComposerOpen((open) => !open);
+        speechInput.current?.focus();
       }
       if (
         event.key === "Escape" &&
@@ -226,9 +225,6 @@ export default function App() {
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
-  useEffect(() => {
-    if (composerOpen) speechInput.current?.focus();
-  }, [composerOpen]);
   const loadGeneration = useRef(0);
   const initializedPlanMonth = useRef(false);
   const reload = async () => {
@@ -546,17 +542,10 @@ export default function App() {
             )}
             {!search && <kbd>⌘ K</kbd>}
           </label>
-          <button
-            className={`ask-toggle ${composerOpen ? "active" : ""}`}
-            aria-expanded={composerOpen}
-            aria-controls="ai-composer"
-            title={isZh ? "与 Telldo 对话 · ⌘ J" : "Ask Telldo · ⌘ J"}
-            onClick={() => setComposerOpen(!composerOpen)}
-          >
-            <Sparkles size={16} />
-            <span>{isZh ? "告诉 Telldo" : "Ask Telldo"}</span>
-            <kbd>⌘ J</kbd>
-          </button>
+          <div className="workspace-status">
+            <span className="local-dot" />
+            {isZh ? "本地工作空间" : "Your local workspace"}
+          </div>
         </header>
         <div className="content">
           <div className="view-heading">
@@ -575,7 +564,7 @@ export default function App() {
                   : currentList?.name ||
                     t(
                       view === "today"
-                        ? "Today’s focus"
+                        ? "Today"
                         : view === "planned"
                           ? "Planned"
                           : "Anytime",
@@ -611,98 +600,23 @@ export default function App() {
                 </div>
               )}
             </div>
-            <p>
-              {t(
-                view === "today"
-                  ? "Every small step counts."
+            <p className="view-description">
+              {search
+                ? isZh
+                  ? "找到你想做的那件事。"
+                  : "Find what matters."
+                : view === "today"
+                  ? isZh
+                    ? "留一点空间，专注重要的事。"
+                    : "A little space for what matters."
                   : view === "planned"
-                    ? "A little planning goes a long way."
-                    : view === "anytime"
-                      ? "Ideas without a deadline."
-                      : "Your space to get things done.",
-              )}
-              {!(view === "planned" && !search) && (
-                <span className="task-total">
-                  {rows.filter((r) => r.task.status === "todo").length}{" "}
-                  {t("tasks")}
-                </span>
-              )}
+                    ? isZh
+                      ? "把想做的事，放进日子里。"
+                      : "Give your plans a place in time."
+                    : isZh
+                      ? "收好每一个想法，按自己的节奏来。"
+                      : "Good ideas, at your own pace."}
             </p>
-          </div>
-          <div
-            id="ai-composer"
-            className="ai-composer"
-            hidden={!composerOpen && !busy}
-          >
-            <div className="composer-heading">
-              <span>
-                {isZh ? "把想法交给 Telldo" : "Make room for your next idea"}
-              </span>
-              <button
-                aria-label={isZh ? "收起 AI 输入" : "Collapse AI composer"}
-                onClick={() => setComposerOpen(false)}
-                disabled={busy}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <section
-              className={`ai-bar ${!data.capabilities?.available ? "unavailable" : ""}`}
-            >
-              <Sparkles size={21} />
-              <input
-                ref={speechInput}
-                aria-label="Tell Telldo"
-                value={speech}
-                onChange={(e) => setSpeech(e.target.value)}
-                placeholder={t("Tell Telldo what’s on your mind…")}
-                disabled={!data.capabilities?.available || busy}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void ask();
-                }}
-              />
-              {busy ? (
-                <button onClick={() => void act(() => api("cancelAI"))}>
-                  {t("Cancel")}
-                </button>
-              ) : (
-                <button
-                  className="ai-submit"
-                  aria-label="Send to Codex"
-                  disabled={!data.capabilities?.available || !speech.trim()}
-                  onClick={() => void ask()}
-                >
-                  <ArrowRight size={18} />
-                </button>
-              )}
-            </section>
-            <div className="ai-caption">
-              {busy ? (
-                <>
-                  <LoaderCircle size={12} className="spin" />
-                  {t("Working…")} {progress.slice(0, 100)}
-                </>
-              ) : !data.capabilities?.available ? (
-                <>
-                  <span>{data.capabilities?.reason || "Checking Codex…"}</span>
-                  <button onClick={() => setSettingsOpen(true)}>
-                    {t("Settings")}
-                    <ArrowUpRight size={12} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="local-dot" />
-                  Codex ·{" "}
-                  {isZh ? "一句话，安排妥当" : "A few words. A clearer day."}
-                  <span className="privacy-hint">
-                    {isZh
-                      ? "上下文将发送给模型提供方"
-                      : "Context is sent to your model provider"}
-                  </span>
-                </>
-              )}
-            </div>
           </div>
           {error && (
             <div role="alert" className="error global-error">
@@ -794,7 +708,7 @@ export default function App() {
                 <Plus size={20} />
                 <input
                   aria-label="New task"
-                  placeholder={t("Add a task… e.g. 明天下午交周报")}
+                  placeholder={isZh ? "手动添加任务…" : "Add a task manually…"}
                   value={newTask}
                   onChange={(e) => setNewTask(e.target.value)}
                   onKeyDown={(e) => {
@@ -913,6 +827,127 @@ export default function App() {
               </div>
             </>
           )}
+        </div>
+        <div className="assistant-dock">
+          <section
+            id="ai-composer"
+            className={`ai-composer ${busy ? "is-working" : ""}`}
+            aria-label={isZh ? "告诉 Telldo" : "Tell Telldo"}
+          >
+            <div className="composer-heading">
+              <div className="assistant-identity">
+                <span className="assistant-spark">
+                  <Sparkles size={19} />
+                </span>
+                <strong>
+                  {isZh ? "说出来，安排好。" : "Say it. Make it happen."}
+                </strong>
+                <span className="assistant-name">TELLDO AI</span>
+              </div>
+              <kbd>⌘ J</kbd>
+            </div>
+            <div className="ai-bar">
+              <textarea
+                ref={speechInput}
+                aria-label="Tell Telldo"
+                rows={1}
+                value={speech}
+                onChange={(e) => setSpeech(e.target.value)}
+                placeholder={
+                  isZh
+                    ? "想到什么就写下来，剩下的交给 Telldo…"
+                    : "A task, a plan, a thought. Tell Telldo what’s on your mind…"
+                }
+                disabled={busy}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !e.nativeEvent.isComposing
+                  ) {
+                    e.preventDefault();
+                    if (data.capabilities?.available && !busy) void ask();
+                  }
+                }}
+              />
+              {busy ? (
+                <button
+                  className="ai-cancel"
+                  onClick={() => void act(() => api("cancelAI"))}
+                >
+                  {t("Cancel")}
+                </button>
+              ) : (
+                <button
+                  className="ai-submit"
+                  aria-label="Send to Codex"
+                  disabled={!data.capabilities?.available || !speech.trim()}
+                  onClick={() => void ask()}
+                >
+                  <ArrowRight size={20} />
+                </button>
+              )}
+            </div>
+            <div className="assistant-bottom">
+              <div
+                className="assistant-examples"
+                aria-label={isZh ? "试试这样说" : "Try saying"}
+              >
+                <span>{isZh ? "试试" : "Try"}</span>
+                {(isZh
+                  ? ["明天下午3点交周报", "每周五整理本周笔记"]
+                  : [
+                      "Send the update tomorrow at 3pm",
+                      "Review my notes every Friday",
+                    ]
+                ).map((example) => (
+                  <button
+                    key={example}
+                    disabled={busy}
+                    onClick={() => {
+                      setSpeech(example);
+                      speechInput.current?.focus();
+                    }}
+                  >
+                    {example}
+                    <ArrowUpRight size={12} />
+                  </button>
+                ))}
+              </div>
+              <div className="ai-caption" aria-live="polite">
+                {busy ? (
+                  <>
+                    <LoaderCircle size={12} className="spin" />
+                    {t("Working…")}
+                    <span className="ai-progress" title={progress}>
+                      {progress.slice(0, 80)}
+                    </span>
+                  </>
+                ) : !data.capabilities?.available ? (
+                  <button
+                    className="connection-action"
+                    onClick={() => setSettingsOpen(true)}
+                    title={data.capabilities?.reason}
+                  >
+                    {isZh ? "连接 Codex" : "Connect Codex"}
+                    <ArrowUpRight size={12} />
+                  </button>
+                ) : (
+                  <>
+                    <span className="local-dot" />
+                    <span>
+                      {isZh ? "AI 更改需你确认" : "You approve AI changes"}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+          <div className="assistant-footnote">
+            {isZh
+              ? "你的任务，本地保存。AI 对话上下文会发送给模型提供方。"
+              : "Tasks stay on your device. AI context is sent to your model provider."}
+          </div>
         </div>
       </main>
       {task && !(view === "planned" && !search) && (
