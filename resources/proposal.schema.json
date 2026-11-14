@@ -3,13 +3,7 @@
   "title": "Telldo task proposal",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "version",
-    "summary",
-    "idempotency_key",
-    "risk",
-    "actions"
-  ],
+  "required": ["version", "summary", "idempotency_key", "risk", "actions"],
   "properties": {
     "version": {
       "type": "integer",
@@ -27,10 +21,7 @@
     },
     "risk": {
       "type": "string",
-      "enum": [
-        "low",
-        "high"
-      ]
+      "enum": ["low", "high"]
     },
     "actions": {
       "type": "array",
@@ -102,10 +93,7 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "key",
-                "value"
-              ],
+              "required": ["key", "value"],
               "properties": {
                 "key": {
                   "type": "string",
