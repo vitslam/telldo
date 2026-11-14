@@ -62,9 +62,9 @@ SQLite 使用 Electron 自带的 `node:sqlite` 同步接口（Electron45.3.2 内
 TELLDO_CODEX_PATH=/absolute/path/to/codex node scripts/codex-live-check.mjs
 ```
 
-## 公司 Linux 开发机
+## Linux 开发与远端 Codex
 
-开发与本地 Git 位于 `/opt/telldo`，没有推送到远程仓库。项目内 `.tools/` 提供独立 Node，避免更改系统 Node10或全局配置。
+公开仓库：https://github.com/vitslam/telldo 。以下地址和路径均为示例，请替换为自己的环境。可用现有 Node.js22.12+；开发环境也可使用项目内 `.tools/` 的独立 Node，以免修改系统环境。
 
 ```bash
 ssh -p 2222 developer@198.51.100.10

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 const executablePath = process.env.TELLDO_EXECUTABLE;
+for (const key of ["TELLDO_SSH_HOST", "TELLDO_SSH_USER", "TELLDO_SSH_RUNNER_PATH"]) { if (!process.env[key]) throw Error(`Set ${key} for the explicit opt-in live SSH test`); }
 if (!executablePath)
   throw Error("Set TELLDO_EXECUTABLE to the packaged desktop executable");
 const dir = await mkdtemp(join(tmpdir(), "telldo-ssh-desktop-"));
@@ -32,13 +33,12 @@ try {
   await invoke("settings", {
     language: "zh",
     aiTransport: "ssh",
-    sshHost: "198.51.100.10",
-    sshUser: "developer",
-    sshPort: 2222,
-    sshCodexPath: "/home/developer/.local/bin/codex",
-    sshRunnerPath:
-      "/opt/telldo/resources/ssh-codex-runner.py",
-    sshProxyUrl: "http://192.0.2.10:3128",
+    sshHost: process.env.TELLDO_SSH_HOST,
+    sshUser: process.env.TELLDO_SSH_USER,
+    sshPort: Number(process.env.TELLDO_SSH_PORT || 22),
+    sshCodexPath: process.env.TELLDO_SSH_CODEX_PATH || "",
+    sshRunnerPath: process.env.TELLDO_SSH_RUNNER_PATH,
+    sshProxyUrl: process.env.TELLDO_SSH_PROXY_URL || "",
     timeZone: "Asia/Shanghai",
   });
   let snapshot = await invoke("snapshot");

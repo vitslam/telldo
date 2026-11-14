@@ -4,7 +4,7 @@ Telldo runs on your Mac and keeps its SQLite database in the Mac application's u
 
 ## Configure
 
-In Telldo settings choose SSH for AI, then provide host, username, port, remote Codex path, Python runner path, and an optional HTTP(S) proxy URL. For this deployment:
+In Telldo settings choose SSH for AI, then provide host, username, port, remote Codex path, Python runner path, and an optional HTTP(S) proxy URL. Example configuration (documentation-only addresses; replace with your own):
 
 - Host: `198.51.100.10`, user: `developer`, port: `2222`.
 - Remote Codex: `/home/developer/.local/bin/codex`.
@@ -30,3 +30,7 @@ The request envelope is one line, and stdin remains open. Cancel, local timeout,
 ## Verified on this Mac (2026-11-14)
 
 Apple Silicon macOS desktop acceptance passed with the packaged app, locally ad-hoc signed. The Mac launched SSH to the configured company host, probed Codex0.162.1, sent only synthetic temporary task context, received a low-risk create proposal, applied it locally and successfully undid it. The round trip plus undo took14.055s; an existing manual task was preserved; no renderer errors. Temporary acceptance data was deleted. This verifies the supplied key/network/proxy route on the test date, not future network availability.
+
+## Optional live desktop test
+
+`npm run test:ssh-desktop` uses temporary synthetic tasks and may consume your Codex quota. Set `TELLDO_EXECUTABLE`, `TELLDO_SSH_HOST`, `TELLDO_SSH_USER`, and `TELLDO_SSH_RUNNER_PATH`; optionally set `TELLDO_SSH_PORT` (default22), `TELLDO_SSH_CODEX_PATH` and `TELLDO_SSH_PROXY_URL`. No company endpoint is built into the public test.
