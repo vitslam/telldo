@@ -77,7 +77,7 @@ export interface Occurrence {
   override_reminder_at?: string | null;
   completed_at: string | null;
 }
-export interface ProposalAction {
+export interface TaskProposalAction {
   type:
     | "create"
     | "update"
@@ -92,6 +92,14 @@ export interface ProposalAction {
   expected_version?: number;
   patch: TaskPatch;
 }
+export interface CreateListAction {
+  type: "create_list";
+  temp_id: string;
+  target_id?: never;
+  expected_version?: never;
+  patch: { name: string; color?: string };
+}
+export type ProposalAction = TaskProposalAction | CreateListAction;
 export interface ProposalInput {
   version: 1;
   summary: string;

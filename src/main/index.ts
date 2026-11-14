@@ -258,7 +258,17 @@ async function dispatch(method: string, args: any[]) {
         send("progress", { ...event, requestId });
       };
       try {
-        const text = String(args[0]).trim();
+        const continuation =
+          args[4] === undefined
+            ? undefined
+            : service.listProposals().find((p) => p.id === args[4]);
+        if (args[4] !== undefined && continuation?.status !== "applied")
+          throw Error(
+            "Only an applied proposal can be continued / 请先确认并应用提案",
+          );
+        const text = continuation
+          ? continuation.source_text
+          : String(args[0]).trim();
         if (!text || text.length > 4000)
           throw Error("Please enter 1–4000 characters");
         progress({
@@ -329,6 +339,13 @@ async function dispatch(method: string, args: any[]) {
             lists: service.listLists().map(({ id, name }) => ({ id, name })),
             tasks: chosen,
             conversation: args[2],
+            continuation: continuation
+              ? {
+                  proposalId: continuation.id,
+                  status: "applied",
+                  summary: continuation.summary,
+                }
+              : undefined,
             inventory: {
               ordinaryTotal: tasks.length,
               ordinaryTodo: tasks.filter((t) => t.status === "todo").length,

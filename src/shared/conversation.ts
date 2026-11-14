@@ -24,8 +24,24 @@ export function conversationContext(context: Record<string, unknown>) {
         )
         .map((x: any) => ({ role: x.role, content: x.content.slice(0, 2000) }))
     : [];
+  const supplied = context.continuation as Record<string, unknown> | undefined;
+  const continuation =
+    supplied &&
+    typeof supplied === "object" &&
+    supplied.status === "applied" &&
+    typeof supplied.proposalId === "string" &&
+    supplied.proposalId.trim().length > 0 &&
+    supplied.proposalId.length <= 200 &&
+    typeof supplied.summary === "string"
+      ? {
+          proposalId: supplied.proposalId,
+          status: "applied" as const,
+          summary: supplied.summary.slice(0, 2000),
+        }
+      : undefined;
   return {
     conversation: history,
+    ...(continuation ? { continuation } : {}),
     inventory: context.inventory,
     readOnlySchedule: context.readOnlySchedule,
   };

@@ -1544,3 +1544,148 @@ button.brand:focus-visible {
 .chat-scroll::-webkit-scrollbar-button {
   display: none;
 }
+
+/* Confirmation keeps entity names visible and implementation identifiers out of the flow. */
+.dialog.proposal-review-dialog {
+  display: flex;
+  flex-direction: column;
+  width: 600px;
+  max-width: calc(100vw - 48px);
+  max-height: min(760px, calc(100vh - 64px));
+  padding: 0;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px #00000030;
+  overflow: hidden;
+  outline: none;
+}
+.proposal-review-body {
+  padding: 0 28px 24px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.proposal-review-summary {
+  margin: 0 0 20px;
+}
+.proposal-review-summary p {
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.proposal-status {
+  display: inline-flex;
+  align-items: center;
+  background: var(--subtle);
+  color: var(--secondary);
+  border-radius: 5px;
+  font-size: 10px;
+  line-height: 1.7;
+  padding: 2px 7px;
+}
+.proposal-status.pending {
+  background: var(--tint);
+  color: var(--brand);
+}
+.proposal-change-list {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.proposal-change {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.proposal-change:last-child {
+  border-bottom: 0;
+}
+.proposal-change-symbol {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--subtle);
+  color: var(--secondary);
+  flex-shrink: 0;
+}
+.new-list-change .proposal-change-symbol {
+  background: var(--tint);
+  color: var(--brand);
+}
+.proposal-change-content {
+  flex: 1;
+  min-width: 0;
+}
+.proposal-action-label {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--faint);
+  display: block;
+  margin-bottom: 4px;
+}
+.proposal-change h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.65;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.proposal-change dl {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.proposal-change dl > div {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px;
+}
+.proposal-change dt {
+  color: var(--faint);
+}
+.proposal-change dd {
+  margin: 0;
+  color: var(--secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.proposal-change-content > p,
+.proposal-review-note {
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.8;
+  margin: 14px 0 0;
+}
+.proposal-operation-error {
+  color: #b86451;
+  border: 1px solid #b8645140;
+  background: #b864510c;
+  padding: 12px;
+  margin-top: 16px;
+  font-size: 12px;
+  line-height: 1.7;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+:root[data-scheme="dark"] .proposal-operation-error {
+  color: #e3a08e;
+}
+.proposal-review-dialog .modal-footer > button:first-child {
+  margin-right: auto;
+  min-width: auto;
+  border-color: transparent;
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Telldo task proposal",
+  "title": "Telldo task and list proposal",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "summary", "idempotency_key", "risk", "actions"],
@@ -41,6 +41,7 @@
           "type": {
             "type": "string",
             "enum": [
+              "create_list",
               "create",
               "update",
               "complete",
@@ -73,7 +74,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Required for create_list; unique within this proposal. Task list_id may reference an earlier create_list temp_id."
           },
           "expected_version": {
             "anyOf": [
@@ -88,7 +90,7 @@
           },
           "patch": {
             "type": "array",
-            "description": "Changed fields only. Empty array for complete, uncomplete or delete. Null value explicitly clears a nullable date or parent field.",
+            "description": "Changed fields only. create_list accepts name and optional color only. Task actions accept task fields only; list_id may reference an earlier create_list temp_id. Empty array for complete, uncomplete or delete. Null explicitly clears nullable task fields.",
             "maxItems": 14,
             "items": {
               "type": "object",
@@ -111,7 +113,9 @@
                     "planned_date",
                     "reminder_at",
                     "sort_order",
-                    "tags"
+                    "tags",
+                    "name",
+                    "color"
                   ]
                 },
                 "value": {

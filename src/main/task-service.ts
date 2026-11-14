@@ -80,6 +80,7 @@ export class TaskService {
       CREATE TABLE IF NOT EXISTS task_tags(task_id TEXT NOT NULL REFERENCES tasks(id),tag_id TEXT NOT NULL REFERENCES tags(id),PRIMARY KEY(task_id,tag_id));
       CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY,source_text TEXT NOT NULL,model_raw TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','applied','rejected','failed','undone')),idempotency_key TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS proposal_scopes(proposal_id TEXT PRIMARY KEY REFERENCES proposals(id),child_versions TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS proposal_created_lists(proposal_id TEXT NOT NULL REFERENCES proposals(id),list_id TEXT NOT NULL REFERENCES lists(id),snapshot_json TEXT NOT NULL,changed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(proposal_id,list_id));
       CREATE TABLE IF NOT EXISTS audit_log(id TEXT PRIMARY KEY,at TEXT NOT NULL,action TEXT NOT NULL,entity TEXT NOT NULL,before_json TEXT,after_json TEXT,proposal_id TEXT,undo_of TEXT);
     `);
     this.schedules = new ScheduleService(this.db);
@@ -287,6 +288,9 @@ export class TaskService {
         "UPDATE lists SET name=@name,color=@color,sort_order=@sort_order,updated_at=@updated_at WHERE id=@id",
       )
       .run(value);
+    this.db
+      .prepare("UPDATE proposal_created_lists SET changed=1 WHERE list_id=?")
+      .run(listId);
     return value;
   }
   deleteList(listId: string): void {
@@ -300,6 +304,9 @@ export class TaskService {
       this.db
         .prepare("UPDATE lists SET archived_at=?,updated_at=? WHERE id=?")
         .run(now(), now(), listId);
+      this.db
+        .prepare("UPDATE proposal_created_lists SET changed=1 WHERE list_id=?")
+        .run(listId);
     })();
   }
   private tags(taskId: string): string[] {
@@ -546,7 +553,42 @@ export class TaskService {
     return this.decode(row);
   }
   private preflight(value: ProposalInput) {
+    const hasNewLists = value.actions.some((a) => a.type === "create_list");
+    const lists = this.listLists();
+    const listIds = new Set(lists.map((list) => list.id));
+    const normalizeName = (name: string) =>
+      name.normalize("NFKC").trim().toLocaleLowerCase();
+    const listNames = new Set(lists.map((list) => normalizeName(list.name)));
     for (const action of value.actions) {
+      // Temporary IDs are a separate namespace, never aliases for stored entities.
+      if (
+        action.temp_id &&
+        (this.db
+          .prepare("SELECT 1 FROM lists WHERE id=?")
+          .get(action.temp_id) ||
+          this.db.prepare("SELECT 1 FROM tasks WHERE id=?").get(action.temp_id))
+      )
+        throw new Error(
+          "Temporary ID conflicts with an existing entity / 临时标识与现有任务或清单冲突",
+        );
+      if (action.type === "create_list") {
+        const name = normalizeName(action.patch.name);
+        if (listNames.has(name))
+          throw new Error(
+            "A list with this name already exists / 已有同名清单，请使用现有清单或换一个名称",
+          );
+        listNames.add(name);
+        listIds.add(action.temp_id);
+        continue;
+      }
+      // For the new compound operation, all list references must resolve before
+      // saving or applying it. Existing task-only proposals retain their behavior.
+      if (
+        hasNewLists &&
+        action.patch.list_id &&
+        !listIds.has(action.patch.list_id)
+      )
+        throw new Error("List not found / 清单不存在或临时清单尚未定义");
       if (action.type !== "create") {
         const target = this.getTask(action.target_id!);
         this.assertVersion(target, action.expected_version!);
@@ -566,6 +608,7 @@ export class TaskService {
       "SELECT id,version FROM tasks WHERE parent_id=? AND deleted_at IS NULL ORDER BY id",
     );
     for (const a of value.actions) {
+      if (a.type === "create_list") continue;
       if (
         a.target_id &&
         (a.type === "delete" ||
@@ -606,10 +649,14 @@ export class TaskService {
       if (
         value.actions.some(
           (a) =>
-            (a.target_id && !allowed.has(a.target_id)) ||
-            (a.patch.parent_id &&
-              !allowed.has(a.patch.parent_id) &&
-              !value.actions.some((x) => x.temp_id === a.patch.parent_id)),
+            a.type !== "create_list" &&
+            ((a.target_id && !allowed.has(a.target_id)) ||
+              (a.patch.parent_id &&
+                !allowed.has(a.patch.parent_id) &&
+                !value.actions.some(
+                  (x) =>
+                    x.type !== "create_list" && x.temp_id === a.patch.parent_id,
+                ))),
         )
       )
         throw new Error(
@@ -678,8 +725,21 @@ export class TaskService {
           );
         this.activeProposal = proposalId;
         const temp = new Map<string, string>();
+        const tempLists = new Map<string, string>();
         for (const a of proposal.actions) {
+          if (a.type === "create_list") {
+            const list = this.createList(a.patch.name, a.patch.color);
+            tempLists.set(a.temp_id, list.id);
+            this.db
+              .prepare(
+                "INSERT INTO proposal_created_lists(proposal_id,list_id,snapshot_json) VALUES(?,?,?)",
+              )
+              .run(proposalId, list.id, JSON.stringify(list));
+            continue;
+          }
           const patch = { ...a.patch };
+          if (patch.list_id && tempLists.has(patch.list_id))
+            patch.list_id = tempLists.get(patch.list_id);
           if (patch.parent_id && temp.has(patch.parent_id))
             patch.parent_id = temp.get(patch.parent_id);
           switch (a.type) {
@@ -756,6 +816,40 @@ export class TaskService {
       for (const entry of entries)
         if (!last.has(entry.entity))
           last.set(entry.entity, JSON.parse(entry.after_json));
+      const createdLists = this.db
+        .prepare(
+          "SELECT list_id,snapshot_json,changed FROM proposal_created_lists WHERE proposal_id=?",
+        )
+        .all(proposalId) as {
+        list_id: string;
+        snapshot_json: string;
+        changed: number;
+      }[];
+      for (const record of createdLists) {
+        const expected = JSON.parse(record.snapshot_json) as List;
+        const current = this.db
+          .prepare("SELECT * FROM lists WHERE id=?")
+          .get(record.list_id) as List | undefined;
+        if (
+          record.changed ||
+          !current ||
+          (Object.keys(expected) as (keyof List)[]).some(
+            (key) => current[key] !== expected[key],
+          )
+        )
+          throw new Error(
+            "Cannot undo: a created list changed after this proposal / 清单已被修改，无法撤销此提案",
+          );
+        const members = this.db
+          .prepare(
+            "SELECT id FROM tasks WHERE list_id=? AND deleted_at IS NULL",
+          )
+          .all(record.list_id) as { id: string }[];
+        if (members.some((task) => !last.has(task.id)))
+          throw new Error(
+            "Cannot undo: new tasks have been added to the list / 清单中已有新增任务，无法撤销此提案",
+          );
+      }
       for (const [entity, after] of last) {
         const current = this.getTask(entity, true);
         if (
@@ -781,6 +875,13 @@ export class TaskService {
       for (const entry of entries) {
         const current = this.getTask(entry.entity, true);
         const before = entry.before_json ? JSON.parse(entry.before_json) : null;
+        if (
+          before &&
+          !this.listLists().some((list) => list.id === before.list_id)
+        )
+          throw new Error(
+            "Cannot undo: the original list is no longer available / 原清单已不存在，无法恢复任务",
+          );
         const restored: Task = before
           ? { ...before, version: current.version + 1, updated_at: now() }
           : {
@@ -792,6 +893,12 @@ export class TaskService {
         this.write(restored);
         this.audit("undo", entry.entity, current, restored, entry.id);
       }
+      // Task undo has removed created tasks or restored moved tasks to their old
+      // lists. Archive only the lists this proposal created; never cascade-delete.
+      for (const record of createdLists)
+        this.db
+          .prepare("UPDATE lists SET archived_at=?,updated_at=? WHERE id=?")
+          .run(now(), now(), record.list_id);
       this.db
         .prepare("UPDATE proposals SET status='undone' WHERE id=?")
         .run(proposalId);

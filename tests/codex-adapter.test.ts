@@ -253,7 +253,7 @@ describe("Codex adapter capability probing and process boundary", () => {
       databasePath: "/secret/db",
       token: "secret",
     });
-    expect(result.proposal.actions[0].patch.title).toBe("交周报");
+    expect(result.proposal.actions[0].patch).toMatchObject({ title: "交周报" });
     const call = calls.at(-1)!;
     expect(call.options.shell).toBe(false);
     expect(call.args).not.toContain(intent);
@@ -286,8 +286,8 @@ describe("Codex adapter capability probing and process boundary", () => {
       scenario: "fragments",
     });
     expect(
-      (await adapter.run("交周报", {})).proposal.actions[0].patch.title,
-    ).toBe("交周报");
+      (await adapter.run("交周报", {})).proposal.actions[0].patch,
+    ).toMatchObject({ title: "交周报" });
     expect(calls.at(-1)!.args).not.toContain("--output-schema");
     expect(calls.at(-1)!.args).not.toContain("--output-last-message");
   });

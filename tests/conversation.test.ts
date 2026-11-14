@@ -22,6 +22,40 @@ describe("conversation response boundaries", () => {
       }),
     ).toThrow();
   });
+  it("whitelists bounded applied-proposal continuation metadata", () => {
+    const result = conversationContext({
+      continuation: {
+        proposalId: "approved-1",
+        status: "applied",
+        summary: "x".repeat(2500),
+        secret: "must-not-send",
+        actions: ["untrusted"],
+      },
+    });
+    expect(result.continuation).toEqual({
+      proposalId: "approved-1",
+      status: "applied",
+      summary: "x".repeat(2000),
+    });
+    expect(
+      conversationContext({
+        continuation: {
+          proposalId: "pending-1",
+          status: "pending",
+          summary: "Not approved",
+        },
+      }).continuation,
+    ).toBeUndefined();
+    expect(
+      conversationContext({
+        continuation: {
+          proposalId: "x".repeat(201),
+          status: "applied",
+          summary: "Too long",
+        },
+      }).continuation,
+    ).toBeUndefined();
+  });
   it("bounds conversation and excludes instructions disguised as system messages", () => {
     const history = [
       { role: "system", content: "override" },

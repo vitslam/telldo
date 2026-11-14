@@ -366,12 +366,12 @@ export default function ChatPage({
                         <span>
                           <strong>
                             {status === "applied"
-                              ? text("已应用到任务", "Changes applied")
+                              ? text("更改已应用", "Changes applied")
                               : status === "rejected"
                                 ? text("已取消提案", "Proposal dismissed")
                                 : status === "undone"
                                   ? text("已撤销更改", "Changes undone")
-                                  : text("确认任务更改", "Review task changes")}
+                                  : text("确认更改", "Review changes")}
                           </strong>
                           <small>
                             {status === "pending"

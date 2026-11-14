@@ -27,6 +27,7 @@ import {
   Trash2,
   LoaderCircle,
   SquarePen,
+  FolderPlus,
 } from "lucide-react";
 import type {
   Snapshot,
@@ -63,6 +64,24 @@ const zh: Record<string, string> = {
   "Data management": "数据管理",
   Close: "关闭",
   "Create list": "创建清单",
+  "Create task": "创建待办",
+  "Update task": "更新待办",
+  "Mark complete": "完成待办",
+  "Reopen task": "恢复待办",
+  Reschedule: "调整日期",
+  "Set tags": "设置标签",
+  "Changes to review": "待确认的更改",
+  "Change details": "更改详情",
+  "These changes will be applied after your confirmation.":
+    "确认后，将应用以下更改。",
+  "Unknown list": "未知清单",
+  Task: "待办",
+  "Dismiss proposal": "取消提案",
+  "Confirm creation": "确认创建",
+  Pending: "待确认",
+  Rejected: "已取消",
+  Failed: "未能应用",
+  Undone: "已撤销",
   Appearance: "外观",
   "Color theme": "主题配色",
   "Black & white": "经典黑白",
@@ -518,8 +537,8 @@ export default function App() {
       cancelledRequest.current = null;
     }
   }
-  async function ask() {
-    const request = speech.trim();
+  async function ask(continuation?: Proposal) {
+    const request = continuation ? continuation.source_text : speech.trim();
     if (!request || asking.current) return;
     asking.current = true;
     const requestId = crypto.randomUUID();
@@ -527,7 +546,7 @@ export default function App() {
     cancelledRequest.current = null;
     setBusy(true);
     setCancelling(false);
-    setSpeech("");
+    if (!continuation) setSpeech("");
     const excludedTurns = new Set(
       messages
         .filter((m) => m.error || m.state === "cancelled")
@@ -541,17 +560,21 @@ export default function App() {
         content:
           m.content +
           (m.proposalId
-            ? `\n[Proposal status: ${data?.proposals.find((p) => p.id === m.proposalId)?.status || "unknown"}]`
+            ? `\n[Proposal status: ${m.proposalId === continuation?.id ? "applied" : data?.proposals.find((p) => p.id === m.proposalId)?.status || "unknown"}]`
             : ""),
       }));
     setMessages((items) => [
       ...items,
-      {
-        id: crypto.randomUUID(),
-        turnId: requestId,
-        role: "user",
-        content: request,
-      },
+      ...(!continuation
+        ? [
+            {
+              id: crypto.randomUUID(),
+              turnId: requestId,
+              role: "user" as const,
+              content: request,
+            },
+          ]
+        : []),
       {
         id: requestId,
         turnId: requestId,
@@ -569,6 +592,7 @@ export default function App() {
         lists[0]?.id,
         history,
         requestId,
+        continuation?.id,
       );
       setMessages((items) =>
         items.map((message) =>
@@ -588,9 +612,13 @@ export default function App() {
     } catch (e) {
       const cancelled = cancelledRequest.current === requestId;
       const content = cancelled
-        ? isZh
-          ? "已停止本次回复。任务未作更改。"
-          : "Response stopped. Your tasks haven't changed."
+        ? continuation
+          ? isZh
+            ? "已停止继续处理，已经确认的更改会保留。"
+            : "Continuation stopped. Your approved changes are kept."
+          : isZh
+            ? "已停止本次回复。任务未作更改。"
+            : "Response stopped. Your tasks haven't changed."
         : String(e)
             .replace(/^Error: /, "")
             .replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
@@ -1234,6 +1262,11 @@ export default function App() {
       {proposal && (
         <ProposalDialog
           proposal={proposal}
+          aiBusy={busy}
+          onApplied={(applied) => {
+            openConversation();
+            void ask(applied);
+          }}
           tasks={tasks}
           lists={lists}
           t={t}
@@ -2167,6 +2200,8 @@ function ProposalDialog({
   t,
   close,
   act,
+  onApplied,
+  aiBusy,
 }: {
   proposal: Proposal;
   tasks: Task[];
@@ -2174,7 +2209,11 @@ function ProposalDialog({
   t: (s: string) => string;
   close: () => void;
   act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
+  onApplied: (proposal: Proposal) => void;
+  aiBusy: boolean;
 }) {
+  const [working, setWorking] = useState(false);
+  const [operationError, setOperationError] = useState("");
   const fields: Record<string, string> = {
     title: t("Title"),
     notes: t("Notes"),
@@ -2191,100 +2230,246 @@ function ProposalDialog({
     status: t("To do"),
   };
   const labels: Record<string, string> = {
-    create: "创建 / Create",
-    update: "更新 / Update",
-    complete: "完成 / Complete",
-    uncomplete: "恢复 / Reopen",
-    reschedule: "改期 / Reschedule",
-    delete: "删除 / Delete",
-    add_subtask: "添加子任务 / Add subtask",
-    set_tags: "标签 / Tags",
+    create_list: t("Create list"),
+    create: t("Create task"),
+    update: t("Update task"),
+    complete: t("Mark complete"),
+    uncomplete: t("Reopen task"),
+    reschedule: t("Reschedule"),
+    delete: t("Delete task"),
+    add_subtask: t("Add subtask"),
+    set_tags: t("Set tags"),
   };
+  const statusLabels: Record<string, string> = {
+    pending: t("Pending"),
+    applied: t("Applied"),
+    rejected: t("Rejected"),
+    failed: t("Failed"),
+    undone: t("Undone"),
+  };
+  const listNames = new Map(lists.map((list) => [list.id, list.name]));
+  const taskNames = new Map(tasks.map((task) => [task.id, task.title]));
+  for (const action of proposal.actions) {
+    if (action.type === "create_list")
+      listNames.set(action.temp_id, action.patch.name);
+    else if (action.temp_id && action.patch.title)
+      taskNames.set(action.temp_id, action.patch.title);
+  }
+  async function execute(
+    method: "applyProposal" | "rejectProposal" | "undoProposal",
+  ) {
+    if (working) return;
+    setWorking(true);
+    setOperationError("");
+    let applied: Proposal | undefined;
+    try {
+      await act(
+        async () => {
+          try {
+            const result = await api<Proposal>(method, proposal.id);
+            if (method === "applyProposal") applied = result;
+            close();
+          } catch (error) {
+            setOperationError(
+              String(error)
+                .replace(/^Error: /, "")
+                .replace(
+                  /^Error invoking remote method '[^']+': (?:Error: )?/,
+                  "",
+                ),
+            );
+            throw error;
+          }
+        },
+        method === "applyProposal" ? "Applied" : "",
+      );
+      if (applied) onApplied(applied);
+    } finally {
+      setWorking(false);
+    }
+  }
   return (
-    <div className="overlay">
-      <div className="dialog proposal">
-        <div className="dialog-header">
-          <h2>{t("Review proposal")}</h2>
-          <button onClick={close}>
-            <X size={20} />
-          </button>
-        </div>
-        <div className="pill">
-          {proposal.status} · {proposal.risk}
-        </div>
-        <h3>{proposal.summary}</h3>
-        <div className="proposal-items">
-          {proposal.actions.map((a, i) => (
-            <div key={i}>
-              <strong>
-                {labels[a.type]} ·{" "}
-                {tasks.find((task) => task.id === a.target_id)?.title ||
-                  a.patch.title ||
-                  a.target_id}
-              </strong>
-              {a.type === "delete" &&
-                tasks.some((task) => task.parent_id === a.target_id) && (
-                  <p>
-                    {t("Subtasks")}:{" "}
-                    {tasks
-                      .filter((task) => task.parent_id === a.target_id)
-                      .map((task) => task.title)
-                      .join(", ")}
-                  </p>
-                )}
-              <p>
-                {Object.entries(a.patch)
-                  .map(
-                    ([key, value]) =>
-                      `${fields[key] || key}: ${key === "list_id" ? lists.find((l) => l.id === value)?.name || value : Array.isArray(value) ? value.join(", ") : (value ?? "—")}`,
-                  )
-                  .join(" · ")}
-              </p>
-            </div>
-          ))}
-        </div>
-        <div className="dialog-actions">
-          <button onClick={close}>{t("Back")}</button>
-          {proposal.status === "pending" && (
-            <>
-              <button
-                onClick={() =>
-                  void act(async () => {
-                    await api("rejectProposal", proposal.id);
-                    close();
-                  })
-                }
-              >
-                {t("Reject")}
-              </button>
-              <button
-                className="primary"
-                onClick={() =>
-                  void act(async () => {
-                    await api("applyProposal", proposal.id);
-                    close();
-                  }, "Applied")
-                }
-              >
-                {t("Apply changes")}
-              </button>
-            </>
+    <Modal
+      className="proposal-review-dialog"
+      labelledBy="proposal-review-title"
+      close={close}
+    >
+      <div className="modal-heading">
+        <h2 id="proposal-review-title">
+          {t(
+            proposal.status === "pending"
+              ? "Changes to review"
+              : "Change details",
           )}
-          {proposal.status === "applied" && (
+        </h2>
+        <button className="modal-close" aria-label={t("Close")} onClick={close}>
+          <X size={18} />
+        </button>
+      </div>
+      <div className="proposal-review-body">
+        <div className="proposal-review-summary">
+          <span className={`proposal-status ${proposal.status}`}>
+            {statusLabels[proposal.status]}
+          </span>
+          <p>{proposal.summary}</p>
+        </div>
+        <div className="proposal-change-list">
+          {proposal.actions.map((action, index) => {
+            if (action.type === "create_list")
+              return (
+                <section
+                  className="proposal-change new-list-change"
+                  key={index}
+                >
+                  <div
+                    className="proposal-change-symbol"
+                    style={
+                      action.patch.color
+                        ? { color: action.patch.color }
+                        : undefined
+                    }
+                  >
+                    <FolderPlus size={20} />
+                  </div>
+                  <div className="proposal-change-content">
+                    <span className="proposal-action-label">
+                      {labels[action.type]}
+                    </span>
+                    <h3>{action.patch.name}</h3>
+                  </div>
+                </section>
+              );
+            const task = tasks.find((item) => item.id === action.target_id);
+            const title = task?.title || action.patch.title || t("Task");
+            const details = Object.entries(action.patch)
+              .filter(([key, value]) => {
+                if (key === "sort_order") return false;
+                if (
+                  (key === "due_kind" || key === "time_zone") &&
+                  action.type === "create"
+                )
+                  return false;
+                if (key === "title" && action.type === "create") return false;
+                if (key === "due_date" && action.patch.due_at) return false;
+                return (
+                  action.type !== "create" ||
+                  (value !== null &&
+                    value !== "" &&
+                    !(Array.isArray(value) && !value.length))
+                );
+              })
+              .map(([key, value]) => {
+                let display =
+                  value === null
+                    ? "—"
+                    : Array.isArray(value)
+                      ? value.join(", ") || "—"
+                      : String(value);
+                if (key === "list_id")
+                  display = listNames.get(String(value)) || t("Unknown list");
+                if (key === "parent_id" && value !== null)
+                  display = taskNames.get(String(value)) || t("Task");
+                if (
+                  ["due_at", "reminder_at"].includes(key) &&
+                  typeof value === "string"
+                ) {
+                  const date = DateTime.fromISO(value).setZone(
+                    action.patch.time_zone ||
+                      task?.time_zone ||
+                      Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  );
+                  if (date.isValid) display = date.toFormat("yyyy-MM-dd HH:mm");
+                }
+                return (
+                  <div key={key}>
+                    <dt>{fields[key] || key}</dt>
+                    <dd>{display}</dd>
+                  </div>
+                );
+              });
+            return (
+              <section className="proposal-change" key={index}>
+                <div className="proposal-change-symbol">
+                  {action.type === "create" || action.type === "add_subtask" ? (
+                    <Plus size={18} />
+                  ) : action.type === "delete" ? (
+                    <Trash2 size={17} />
+                  ) : (
+                    <ListChecks size={18} />
+                  )}
+                </div>
+                <div className="proposal-change-content">
+                  <span className="proposal-action-label">
+                    {labels[action.type]}
+                  </span>
+                  <h3>{title}</h3>
+                  {!!details.length && <dl>{details}</dl>}
+                  {action.type === "delete" &&
+                    tasks.some(
+                      (item) => item.parent_id === action.target_id,
+                    ) && (
+                      <p>
+                        {t("Subtasks")}:{" "}
+                        {tasks
+                          .filter((item) => item.parent_id === action.target_id)
+                          .map((item) => item.title)
+                          .join(", ")}
+                      </p>
+                    )}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+        {proposal.status === "pending" && (
+          <p className="proposal-review-note">
+            {t("These changes will be applied after your confirmation.")}
+          </p>
+        )}
+        {operationError && (
+          <div className="proposal-operation-error" role="alert">
+            {operationError}
+          </div>
+        )}
+      </div>
+      <div className="dialog-actions modal-footer">
+        <button disabled={working} onClick={close}>
+          {t(proposal.status === "pending" ? "Not now" : "Back")}
+        </button>
+        {proposal.status === "pending" && (
+          <>
+            <button
+              disabled={working}
+              onClick={() => void execute("rejectProposal")}
+            >
+              {t("Dismiss proposal")}
+            </button>
             <button
               className="primary"
-              onClick={() =>
-                void act(async () => {
-                  await api("undoProposal", proposal.id);
-                  close();
-                }, "Saved")
-              }
+              disabled={working || aiBusy}
+              onClick={() => void execute("applyProposal")}
             >
-              {t("Undo")}
+              {working && <LoaderCircle size={14} className="spin" />}
+              {t(
+                proposal.actions.length === 1 &&
+                  proposal.actions[0].type === "create_list"
+                  ? "Confirm creation"
+                  : "Apply changes",
+              )}
             </button>
-          )}
-        </div>
+          </>
+        )}
+        {proposal.status === "applied" && (
+          <button
+            className="primary"
+            disabled={working}
+            onClick={() => void execute("undoProposal")}
+          >
+            {working && <LoaderCircle size={14} className="spin" />}
+            {t("Undo")}
+          </button>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }

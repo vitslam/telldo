@@ -254,7 +254,7 @@ describe("SSH transport boundary", () => {
       databasePath: "/private/tasks.db",
       credential: "no-send",
     });
-    expect(result.proposal.actions[0].patch.title).toBe("交周报");
+    expect(result.proposal.actions[0].patch).toMatchObject({ title: "交周报" });
     const call = calls.at(-1)!;
     expect(call.file).toBe("ssh");
     expect(call.options.shell).toBe(false);

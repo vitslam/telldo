@@ -39,7 +39,7 @@ export const taskPatchSchema = z
 export function parseTaskPatch(value: unknown): TaskPatch {
   return taskPatchSchema.parse(value);
 }
-const actionSchema = z
+const taskActionSchema = z
   .object({
     type: z.enum([
       "create",
@@ -103,6 +103,22 @@ const actionSchema = z
     if (a.type === "reschedule" && !Object.keys(a.patch).length)
       ctx.addIssue({ code: "custom", message: "Reschedule patch is empty" });
   });
+const createListActionSchema = z
+  .object({
+    type: z.literal("create_list"),
+    temp_id: z.string().min(1).max(200),
+    patch: z
+      .object({
+        name: z.string().trim().min(1).max(200),
+        color: z
+          .string()
+          .regex(/^#[0-9a-f]{6}$/i, "Invalid list color")
+          .optional(),
+      })
+      .strict(),
+  })
+  .strict();
+const actionSchema = z.union([taskActionSchema, createListActionSchema]);
 export const proposalSchema = z
   .object({
     version: z.literal(1),
@@ -152,14 +168,56 @@ export function parseProposal(value: unknown): ProposalInput {
     };
   }
   const result = proposalSchema.parse(value);
-  const targets = result.actions
-    .filter((a) => a.type !== "create")
-    .map((a) => a.target_id);
+  const targets = result.actions.flatMap((a) =>
+    a.type === "create" || a.type === "create_list" ? [] : [a.target_id],
+  );
   if (new Set(targets).size !== targets.length)
     throw new Error("A proposal may change each existing task only once");
   const temps = result.actions.map((a) => a.temp_id).filter(Boolean);
   if (new Set(temps).size !== temps.length)
-    throw new Error("Duplicate temporary task ID");
+    throw new Error("Duplicate temporary entity ID");
+  const definitions = new Map(
+    result.actions.flatMap((a, index) =>
+      a.temp_id
+        ? [
+            [
+              a.temp_id,
+              {
+                index,
+                kind:
+                  a.type === "create_list"
+                    ? "list"
+                    : a.type === "create" || a.type === "add_subtask"
+                      ? "task"
+                      : "unused",
+              },
+            ] as const,
+          ]
+        : [],
+    ),
+  );
+  for (const [index, action] of result.actions.entries()) {
+    if (action.type === "create_list") continue;
+    if (action.target_id && definitions.has(action.target_id))
+      throw new Error(
+        "An action target must be an existing task, not a temporary entity",
+      );
+    for (const [reference, kind] of [
+      [action.patch.list_id, "list"],
+      [action.patch.parent_id, "task"],
+    ] as const) {
+      if (!reference) continue;
+      const definition = definitions.get(reference);
+      // Unknown references are resolved against live entities in service preflight.
+      if (!definition) continue;
+      if (definition.kind !== kind)
+        throw new Error(`Temporary reference requires a ${kind}`);
+      if (definition.index >= index)
+        throw new Error(
+          "Temporary references must follow their creation action",
+        );
+    }
+  }
   if (
     result.actions.length !== 1 ||
     result.actions[0].type !== "create" ||
