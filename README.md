@@ -88,7 +88,7 @@ npm run dist:mac      # 在 macOS 上构建 zip
 npm run package:linux
 ```
 
-构建结果放在 `release/`。远端 ZIP 未做开发者签名和公证；正式分发需开发者签名和公证。此电脑安装的 Apple Silicon 客户端已做本机 ad-hoc 签名并完成真实 Mac 验收。Linux 上可用 `npm run package:mac:linux` 交叉组装两种架构的 macOS 应用；下载的 Electron 运行时按官方 SHA256 校验，SQLite 随目标运行时提供。构建脚本见 [跨平台打包](docs/macos-packaging.md)。跨平台架构已分层，但 Windows 未进行运行验收；不承诺跨系统后台唤醒。当前已实际验证的环境和产物见 [验收记录](docs/acceptance.md)。
+构建结果放在 `release/`。远端 ZIP 未做开发者签名和公证；正式分发需开发者签名和公证。0.2.0 Apple Silicon 安装副本已做本机 ad-hoc 签名，本次 Mac 实机验证交由使用者完成；远端自动与界面测试结果见 [日历验收](docs/calendar-acceptance.md)。Linux 上可用 `npm run package:mac:linux` 交叉组装两种架构的 macOS 应用；下载的 Electron 运行时按官方 SHA256 校验，SQLite 随目标运行时提供。构建脚本见 [跨平台打包](docs/macos-packaging.md)。跨平台架构已分层，但 Windows 未进行运行验收；不承诺跨系统后台唤醒。当前已实际验证的环境和产物见 [验收记录](docs/acceptance.md)。
 
 ## 代码结构
 
