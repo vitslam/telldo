@@ -1,83 +1,1787 @@
-import { useEffect, useMemo, useState } from 'react'
-import {DateTime} from 'luxon'
-import { Sun, CalendarDays, Layers, Plus, Search, Settings as SettingsIcon, Sparkles, ArrowUpRight, X, Check, Hash, MoreHorizontal, ArrowRight, ListChecks, Undo2, Repeat2, Bell, Trash2, LoaderCircle } from 'lucide-react'
-import type { Snapshot, Task, TaskPatch, Proposal, Occurrence, Settings } from '../shared/types'
-import { localDay, taskInView, taskFromOccurrence, isOverdue } from '../shared/dates'
+import { useEffect, useMemo, useState } from "react";
+import { DateTime } from "luxon";
+import {
+  Sun,
+  CalendarDays,
+  Layers,
+  Plus,
+  Search,
+  Settings as SettingsIcon,
+  Sparkles,
+  ArrowUpRight,
+  X,
+  Check,
+  Hash,
+  MoreHorizontal,
+  ArrowRight,
+  ListChecks,
+  Undo2,
+  Repeat2,
+  Bell,
+  Trash2,
+  LoaderCircle,
+} from "lucide-react";
+import type {
+  Snapshot,
+  Task,
+  TaskPatch,
+  Proposal,
+  Occurrence,
+  Settings,
+} from "../shared/types";
+import {
+  localDay,
+  taskInView,
+  taskFromOccurrence,
+  isOverdue,
+} from "../shared/dates";
 
-const zh:Record<string,string> = {'Today':'今天','Planned':'计划','Anytime':'随时','MY LISTS':'我的清单','New list':'新建清单','Settings':'设置','Search tasks, notes, tags…':'搜索任务、备注和标签…','Tell Telldo what’s on your mind…':'跟 Telldo 说，你想做什么…','Add a task… e.g. 明天下午交周报':'添加任务，例如：明天下午交周报','Add task':'添加任务','All done for now':'暂时没有待办','A little space for your next idea.':'为下一件事，留一点空间。','TASK DETAILS':'任务详情','Notes':'备注','Add a little context…':'写下更多细节…','List':'清单','Priority':'优先级','None':'无','Low':'低','Medium':'中','High':'高','Due date':'截止日期','No date':'无日期','Date only':'日期','Date & time':'日期和时间','Natural date':'自然语言日期','Parse':'解析','Planned date':'安排日期','Reminder':'提醒','Tags':'标签','Comma separated':'用逗号分隔','Save changes':'保存更改','Delete task':'删除任务','Subtasks':'子任务','Add subtask':'添加子任务','Repeat':'重复','Does not repeat':'不重复','Daily':'每天','Weekdays':'工作日','Weekly':'每周','Monthly':'每月日期','Monthly weekday':'每月第几个星期几','Month day':'每月几号','Week position':'第几个','Weekday':'星期','Until':'截止到','Count':'次数','Set repeat':'设置重复','Remove repeat':'取消重复','Upcoming occurrences':'重复实例','Skip':'跳过','Done':'已完成','To do':'未完成','Back':'返回','Cancel':'取消','Review proposal':'确认提案','Apply changes':'确认应用','Reject':'拒绝','Applied':'已应用','Undo':'撤销','Working…':'正在处理…','Pending proposals':'待确认提案','Show completed':'显示已完成','Hide completed':'隐藏已完成','Language':'语言','System':'跟随系统','Time zone':'时区','System time zone':'系统时区','Codex executable':'Codex 可执行文件','Detect Codex':'检测 Codex','Always confirm AI changes':'AI 更改一律确认','Close window to tray':'关闭窗口后保留托盘运行','Backup database':'备份数据库','Export JSON':'导出 JSON','Import JSON':'导入 JSON','Open data folder':'打开数据目录','Save settings':'保存设置','Local first. Room to think.':'本地优先，安心安排。','Rename list':'重命名清单','Delete list':'删除清单','Create':'创建','Name':'名称','Today’s focus':'今天，专注当下','A little planning goes a long way.':'提前安排，从容一些。','Ideas without a deadline.':'没有期限，也值得记住。','Your space to get things done.':'让想做的事，一件件完成。','tasks':'项待办','Every small step counts.':'每一小步，都算数。','Saved':'已保存','Completed':'已完成','Reopen':'重新打开','Delete this task and its subtasks?':'删除此任务及其子任务？','Delete this list and its tasks?':'删除此清单及其中的任务？','Delete':'删除','Not now':'暂不','AI sends selected task context to your Codex provider. Your subscription or API fees apply.':'AI 会把选定的任务上下文发送给 Codex 提供方，使用你自己的订阅、额度或 API 费用。','Reminders work while Telldo is running, including in the tray. They are not guaranteed after Quit.':'Telldo 运行中（含托盘后台）提供提醒；完全退出后不保证送达。','Never synchronize the live SQLite database with a cloud drive. JSON import creates new IDs.':'不要用网盘同步正在使用的 SQLite 数据库。JSON 导入会生成新 ID。','Install Codex and run codex login in a terminal, then detect again. Manual features remain available.':'安装 Codex 并在终端运行 codex login，再重新检测。手动功能始终可用。','Read-only sandbox is not full tool isolation.':'只读沙箱不等于完全禁用工具。','Timezone (IANA)':'时区（IANA）','Reschedule instance':'改期此实例','No pending proposals':'没有待确认提案','AI created a task':'AI 已创建任务','Use commas, e.g. MO,WE,FR':'用逗号分隔，例如 MO,WE,FR','Title':'标题','Proposal':'提案','Recurring template':'重复任务模板','Show more occurrences':'显示更多实例','Remove repeat before changing its date or time zone.':'更改重复规则的日期或时区前，请先取消重复。'}
-type Row={task:Task; occurrence?:Occurrence; template?:boolean}
-const api=<T,>(method:string,...args:unknown[])=>window.telldo.invoke<T>(method,...args)
-export default function App(){
- const [data,setData]=useState<Snapshot|null>(null),[view,setView]=useState('today'),[search,setSearch]=useState(''),[selected,setSelected]=useState<string|null>(null),[newTask,setNewTask]=useState(''),[speech,setSpeech]=useState(''),[busy,setBusy]=useState(false),[progress,setProgress]=useState(''),[error,setError]=useState(''),[toast,setToast]=useState(''),[settingsOpen,setSettingsOpen]=useState(false),[showDone,setShowDone]=useState(false),[listDialog,setListDialog]=useState<{id?:string,name:string}|null>(null),[proposalId,setProposalId]=useState<string|null>(null),[confirm,setConfirm]=useState<{message:string;run:()=>Promise<unknown>}|null>(null)
- const reload=async()=>setData(await api<Snapshot>('snapshot'))
- const lang=data?.settings.language==='system'?data.systemLanguage:data?.settings.language
- const isZh=lang?.startsWith('zh')??true
- const t=(text:string)=>isZh?(zh[text]||text):text
- const zone=data?.settings.timeZone||data?.systemTimeZone||Intl.DateTimeFormat().resolvedOptions().timeZone
- const act=async(fn:()=>Promise<unknown>,message='')=>{setError('');try{await fn();await reload();if(message)setToast(t(message))}catch(e){setError(String(e).replace(/^Error: /,''))}}
- useEffect(()=>{void reload().catch(e=>setError(String(e)));return window.telldo.onEvent(event=>{if(event.type==='changed')void reload();if(event.type==='select')setSelected(String(event.data));if(event.type==='progress')setProgress(typeof event.data==='string'?event.data:JSON.stringify(event.data))})},[])
- useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),6000);return()=>clearTimeout(timer)},[toast])
- const tasks=data?.tasks||[],lists=data?.lists||[]
- const allRows=useMemo(()=>{
-  const result:Row[]=[]
-  for(const task of tasks.filter(t=>!t.parent_id)){
-   const series=data?.recurrences.find(r=>r.task_id===task.id)
-   if(series){const instances=data!.occurrences.filter(o=>o.series_id===series.id && o.status!=='skipped');for(const occurrence of instances)result.push({task:taskFromOccurrence(task,occurrence,series.tzid),occurrence});if(!instances.length)result.push({task,template:true})}
-   else result.push({task})
+const zh: Record<string, string> = {
+  "AI connection": "AI 连接方式",
+  "This Mac / Local": "本机 Codex",
+  "Remote computer over SSH": "通过 SSH 连接远端电脑",
+  "SSH host": "远端主机",
+  "SSH user": "SSH 用户",
+  "SSH port": "SSH 端口",
+  "Remote Codex path": "远端 Codex 路径",
+  "Connection helper path": "远端连接助手路径",
+  "Remote proxy (optional)": "远端代理（可选）",
+  "SSH uses your existing keys and known hosts. No password or token is stored in Telldo.":
+    "SSH 使用已有密钥和已信任的主机记录，Telldo 不保存密码或 token。",
+  "SSH connection details": "SSH 连接参数",
+
+  Today: "今天",
+  Planned: "计划",
+  Anytime: "随时",
+  "MY LISTS": "我的清单",
+  "New list": "新建清单",
+  Settings: "设置",
+  "Search tasks, notes, tags…": "搜索任务、备注和标签…",
+  "Tell Telldo what’s on your mind…": "跟 Telldo 说，你想做什么…",
+  "Add a task… e.g. 明天下午交周报": "添加任务，例如：明天下午交周报",
+  "Add task": "添加任务",
+  "All done for now": "暂时没有待办",
+  "A little space for your next idea.": "为下一件事，留一点空间。",
+  "TASK DETAILS": "任务详情",
+  Notes: "备注",
+  "Add a little context…": "写下更多细节…",
+  List: "清单",
+  Priority: "优先级",
+  None: "无",
+  Low: "低",
+  Medium: "中",
+  High: "高",
+  "Due date": "截止日期",
+  "No date": "无日期",
+  "Date only": "日期",
+  "Date & time": "日期和时间",
+  "Natural date": "自然语言日期",
+  Parse: "解析",
+  "Planned date": "安排日期",
+  Reminder: "提醒",
+  Tags: "标签",
+  "Comma separated": "用逗号分隔",
+  "Save changes": "保存更改",
+  "Delete task": "删除任务",
+  Subtasks: "子任务",
+  "Add subtask": "添加子任务",
+  Repeat: "重复",
+  "Does not repeat": "不重复",
+  Daily: "每天",
+  Weekdays: "工作日",
+  Weekly: "每周",
+  Monthly: "每月日期",
+  "Monthly weekday": "每月第几个星期几",
+  "Month day": "每月几号",
+  "Week position": "第几个",
+  Weekday: "星期",
+  Until: "截止到",
+  Count: "次数",
+  "Set repeat": "设置重复",
+  "Remove repeat": "取消重复",
+  "Upcoming occurrences": "重复实例",
+  Skip: "跳过",
+  Done: "已完成",
+  "To do": "未完成",
+  Back: "返回",
+  Cancel: "取消",
+  "Review proposal": "确认提案",
+  "Apply changes": "确认应用",
+  Reject: "拒绝",
+  Applied: "已应用",
+  Undo: "撤销",
+  "Working…": "正在处理…",
+  "Pending proposals": "待确认提案",
+  "Show completed": "显示已完成",
+  "Hide completed": "隐藏已完成",
+  Language: "语言",
+  System: "跟随系统",
+  "Time zone": "时区",
+  "System time zone": "系统时区",
+  "Codex executable": "Codex 可执行文件",
+  "Detect Codex": "检测 Codex",
+  "Always confirm AI changes": "AI 更改一律确认",
+  "Close window to tray": "关闭窗口后保留托盘运行",
+  "Backup database": "备份数据库",
+  "Export JSON": "导出 JSON",
+  "Import JSON": "导入 JSON",
+  "Open data folder": "打开数据目录",
+  "Save settings": "保存设置",
+  "Local first. Room to think.": "本地优先，安心安排。",
+  "Rename list": "重命名清单",
+  "Delete list": "删除清单",
+  Create: "创建",
+  Name: "名称",
+  "Today’s focus": "今天，专注当下",
+  "A little planning goes a long way.": "提前安排，从容一些。",
+  "Ideas without a deadline.": "没有期限，也值得记住。",
+  "Your space to get things done.": "让想做的事，一件件完成。",
+  tasks: "项待办",
+  "Every small step counts.": "每一小步，都算数。",
+  Saved: "已保存",
+  Completed: "已完成",
+  Reopen: "重新打开",
+  "Delete this task and its subtasks?": "删除此任务及其子任务？",
+  "Delete this list and its tasks?": "删除此清单及其中的任务？",
+  Delete: "删除",
+  "Not now": "暂不",
+  "AI sends selected task context to your Codex provider. Your subscription or API fees apply.":
+    "AI 会把选定的任务上下文发送给 Codex 提供方，使用你自己的订阅、额度或 API 费用。",
+  "Reminders work while Telldo is running, including in the tray. They are not guaranteed after Quit.":
+    "Telldo 运行中（含托盘后台）提供提醒；完全退出后不保证送达。",
+  "Never synchronize the live SQLite database with a cloud drive. JSON import creates new IDs.":
+    "不要用网盘同步正在使用的 SQLite 数据库。JSON 导入会生成新 ID。",
+  "Install Codex and run codex login in a terminal, then detect again. Manual features remain available.":
+    "安装 Codex 并在终端运行 codex login，再重新检测。手动功能始终可用。",
+  "Read-only sandbox is not full tool isolation.":
+    "只读沙箱不等于完全禁用工具。",
+  "Timezone (IANA)": "时区（IANA）",
+  "Reschedule instance": "改期此实例",
+  "No pending proposals": "没有待确认提案",
+  "AI created a task": "AI 已创建任务",
+  "Use commas, e.g. MO,WE,FR": "用逗号分隔，例如 MO,WE,FR",
+  Title: "标题",
+  Proposal: "提案",
+  "Recurring template": "重复任务模板",
+  "Show more occurrences": "显示更多实例",
+  "Remove repeat before changing its date or time zone.":
+    "更改重复规则的日期或时区前，请先取消重复。",
+};
+type Row = { task: Task; occurrence?: Occurrence; template?: boolean };
+const api = <T,>(method: string, ...args: unknown[]) =>
+  window.telldo.invoke<T>(method, ...args);
+export default function App() {
+  const [data, setData] = useState<Snapshot | null>(null),
+    [view, setView] = useState("today"),
+    [search, setSearch] = useState(""),
+    [selected, setSelected] = useState<string | null>(null),
+    [newTask, setNewTask] = useState(""),
+    [speech, setSpeech] = useState(""),
+    [busy, setBusy] = useState(false),
+    [progress, setProgress] = useState(""),
+    [error, setError] = useState(""),
+    [toast, setToast] = useState(""),
+    [settingsOpen, setSettingsOpen] = useState(false),
+    [showDone, setShowDone] = useState(false),
+    [listDialog, setListDialog] = useState<{
+      id?: string;
+      name: string;
+    } | null>(null),
+    [proposalId, setProposalId] = useState<string | null>(null),
+    [confirm, setConfirm] = useState<{
+      message: string;
+      run: () => Promise<unknown>;
+    } | null>(null);
+  const reload = async () => setData(await api<Snapshot>("snapshot"));
+  const lang =
+    data?.settings.language === "system"
+      ? data.systemLanguage
+      : data?.settings.language;
+  const isZh = lang?.startsWith("zh") ?? true;
+  const t = (text: string) => (isZh ? zh[text] || text : text);
+  const zone =
+    data?.settings.timeZone ||
+    data?.systemTimeZone ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const act = async (fn: () => Promise<unknown>, message = "") => {
+    setError("");
+    try {
+      await fn();
+      await reload();
+      if (message) setToast(t(message));
+    } catch (e) {
+      setError(String(e).replace(/^Error: /, ""));
+    }
+  };
+  useEffect(() => {
+    void reload().catch((e) => setError(String(e)));
+    return window.telldo.onEvent((event) => {
+      if (event.type === "changed") void reload();
+      if (event.type === "select") setSelected(String(event.data));
+      if (event.type === "progress")
+        setProgress(
+          typeof event.data === "string"
+            ? event.data
+            : JSON.stringify(event.data),
+        );
+    });
+  }, []);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(""), 6000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+  const tasks = data?.tasks || [],
+    lists = data?.lists || [];
+  const allRows = useMemo(() => {
+    const result: Row[] = [];
+    for (const task of tasks.filter((t) => !t.parent_id)) {
+      const series = data?.recurrences.find((r) => r.task_id === task.id);
+      if (series) {
+        const instances = data!.occurrences.filter(
+          (o) => o.series_id === series.id && o.status !== "skipped",
+        );
+        for (const occurrence of instances)
+          result.push({
+            task: taskFromOccurrence(task, occurrence, series.tzid),
+            occurrence,
+          });
+        if (!instances.length) result.push({ task, template: true });
+      } else result.push({ task });
+    }
+    return result;
+  }, [data]);
+  const rows = useMemo(
+    () =>
+      (search
+        ? [
+            ...allRows,
+            ...tasks
+              .filter((t) => t.parent_id)
+              .map((task) => ({ task }) as Row),
+          ]
+        : allRows
+      )
+        .filter(
+          ({ task, template }) =>
+            (!template || !!search || view === task.list_id) &&
+            (showDone || task.status !== "done") &&
+            (search
+              ? `${task.title} ${task.notes} ${task.tags.join(" ")}`
+                  .toLowerCase()
+                  .includes(search.toLowerCase())
+              : ["today", "planned", "anytime"].includes(view)
+                ? taskInView(task, view, zone, undefined, showDone)
+                : task.list_id === view),
+        )
+        .sort(
+          (a, b) =>
+            Number(a.task.status === "done") -
+              Number(b.task.status === "done") ||
+            (a.task.due_date || "9999").localeCompare(
+              b.task.due_date || "9999",
+            ) ||
+            { high: 0, medium: 1, low: 2, none: 3 }[a.task.priority] -
+              { high: 0, medium: 1, low: 2, none: 3 }[b.task.priority],
+        ),
+    [allRows, tasks, view, search, showDone, zone],
+  );
+  const task = tasks.find((t) => t.id === selected),
+    currentList = lists.find((l) => l.id === view),
+    pending = data?.proposals.filter((p) => p.status === "pending") || [],
+    proposal = data?.proposals.find((p) => p.id === proposalId),
+    lastApplied = data?.proposals.find((p) => p.status === "applied");
+  async function addTask() {
+    if (!newTask.trim() || !lists.length) return;
+    await act(async () => {
+      const parsed = await api<TaskPatch>("parseDate", newTask);
+      await api("createTask", {
+        ...parsed,
+        title: parsed.title || newTask,
+        list_id: currentList?.id || lists[0].id,
+        ...(view === "today" && parsed.due_kind === "none"
+          ? { planned_date: localDay(zone) }
+          : {}),
+      });
+      setNewTask("");
+    });
   }
-  return result
- },[data])
- const rows=useMemo(()=>(search?[...allRows,...tasks.filter(t=>t.parent_id).map(task=>({task} as Row))]:allRows).filter(({task,template})=>(!template||!!search||view===task.list_id) && (showDone||task.status!=='done') && (search?`${task.title} ${task.notes} ${task.tags.join(' ')}`.toLowerCase().includes(search.toLowerCase()):(['today','planned','anytime'].includes(view)?taskInView(task,view,zone,undefined,showDone):task.list_id===view))).sort((a,b)=>Number(a.task.status==='done')-Number(b.task.status==='done')||(a.task.due_date||'9999').localeCompare(b.task.due_date||'9999')||({high:0,medium:1,low:2,none:3}[a.task.priority]-{high:0,medium:1,low:2,none:3}[b.task.priority]))
- ,[allRows,tasks,view,search,showDone,zone])
- const task=tasks.find(t=>t.id===selected),currentList=lists.find(l=>l.id===view),pending=data?.proposals.filter(p=>p.status==='pending')||[],proposal=data?.proposals.find(p=>p.id===proposalId),lastApplied=data?.proposals.find(p=>p.status==='applied')
- async function addTask(){if(!newTask.trim()||!lists.length)return;await act(async()=>{const parsed=await api<TaskPatch>('parseDate',newTask);await api('createTask',{...parsed,title:parsed.title||newTask,list_id:currentList?.id||lists[0].id,...(view==='today' && parsed.due_kind==='none'?{planned_date:localDay(zone)}:{})});setNewTask('')})}
- async function ask(){if(!speech.trim())return;setBusy(true);setProgress('');await act(async()=>{const id=await api<string>('ask',speech,currentList?.id||lists[0]?.id);setProposalId(id);setSpeech('')});setBusy(false)}
- const dateLabel=(item:Task)=>{if(item.due_kind==='datetime'&&item.due_at)return new Intl.DateTimeFormat(isZh?'zh-CN':'en',{timeZone:item.time_zone||zone,month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(item.due_at));return item.due_date||item.planned_date||''}
- if(!data)return <div className="loading"><div className="brand-mark">t.</div><p>{error||'Telldo'}</p><LoaderCircle className="spin"/></div>
- return <div className="app-shell">
-  <aside className="sidebar"><div className="brand"><div className="brand-mark">t.</div><span>Telldo<span className="beta">BETA</span></span></div><div className="workspace"><div className="avatar">{isZh?'我':'M'}</div><div><strong>{isZh?'我的空间':'My workspace'}</strong><small>{isZh?'只属于你的日常':'A space of your own'}</small></div><span className="local-dot"/></div>
-   <nav>{[['today','Today',Sun],['planned','Planned',CalendarDays],['anytime','Anytime',Layers]].map(([id,label,Icon])=>{const I=Icon as typeof Sun;return <button key={String(id)} className={`nav-item ${view===id?'active':''}`} onClick={()=>{setView(String(id));setSearch('')}}><I size={18}/><span>{t(String(label))}</span><small>{allRows.filter(({task:a,template})=>!template&&taskInView(a,String(id),zone)).length}</small></button>})}</nav>
-   <div className="section-label">{t('MY LISTS')}<button aria-label={t('New list')} onClick={()=>setListDialog({name:''})}><Plus size={16}/></button></div><div className="list-nav">{lists.map(list=><button className={`nav-item ${view===list.id?'active':''}`} key={list.id} onClick={()=>{setView(list.id);setSearch('')}}><span className="list-dot" style={{background:list.color}}/><span>{list.name}</span><small>{allRows.filter(({task:t,template})=>!template&&t.list_id===list.id&&t.status==='todo').length}</small></button>)}</div><button className="new-list" onClick={()=>setListDialog({name:''})}><Plus size={16}/>{t('New list')}</button>
-   <div className="sidebar-bottom"><div className="local-note"><span className="local-dot"/>{t('Local first. Room to think.')}</div><button className="nav-item" onClick={()=>setSettingsOpen(true)}><SettingsIcon size={18}/>{t('Settings')}</button></div>
-  </aside>
-  <main><header className="topbar"><div className="breadcrumb">{isZh?'我的空间':'My workspace'}<span>/</span><strong>{search?t('Search tasks, notes, tags…'):currentList?.name||t(view==='today'?'Today':view==='planned'?'Planned':'Anytime')}</strong></div><label className="search"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder={t('Search tasks, notes, tags…')}/>{search&&<button onClick={()=>setSearch('')}><X size={14}/></button>}</label></header>
-   <div className="content"><div className="view-heading"><div className="eyebrow">{new Intl.DateTimeFormat(isZh?'zh-CN':'en',{timeZone:zone,month:'long',day:'numeric',weekday:'long'}).format(new Date())}</div><div className="heading-line"><h1>{search?`${isZh?'搜索':'Search'} · ${search}`:currentList?.name||t(view==='today'?'Today’s focus':view==='planned'?'Planned':'Anytime')}</h1>{currentList&&<div className="heading-actions"><button title={t('Rename list')} onClick={()=>setListDialog({id:currentList.id,name:currentList.name})}><MoreHorizontal size={20}/></button><button title={t('Delete list')} onClick={()=>setConfirm({message:t('Delete this list and its tasks?'),run:async()=>{await api('deleteList',currentList.id);setView('today')}})}><Trash2 size={16}/></button></div>}</div><p>{t(view==='today'?'Every small step counts.':view==='planned'?'A little planning goes a long way.':view==='anytime'?'Ideas without a deadline.':'Your space to get things done.')}<span className="task-total">{rows.filter(r=>r.task.status==='todo').length} {t('tasks')}</span></p></div>
-   <section className={`ai-bar ${!data.capabilities?.available?'unavailable':''}`}><Sparkles size={21}/><input aria-label="Tell Telldo" value={speech} onChange={e=>setSpeech(e.target.value)} placeholder={t('Tell Telldo what’s on your mind…')} disabled={!data.capabilities?.available||busy} onKeyDown={e=>{if(e.key==='Enter')void ask()}}/>{busy?<button onClick={()=>void act(()=>api('cancelAI'))}>{t('Cancel')}</button>:<button className="ai-submit" aria-label="Send to Codex" disabled={!data.capabilities?.available||!speech.trim()} onClick={()=>void ask()}><ArrowRight size={18}/></button>}</section>
-   <div className="ai-caption">{busy?<><LoaderCircle size={12} className="spin"/>{t('Working…')} {progress.slice(0,100)}</>:!data.capabilities?.available?<><span>{data.capabilities?.reason||'Checking Codex…'}</span><button onClick={()=>setSettingsOpen(true)}>{t('Settings')}<ArrowUpRight size={12}/></button></>:<><span className="local-dot"/>Codex · {isZh?'一句话，安排妥当':'A few words. A clearer day.'}<span className="privacy-hint">{isZh?'上下文将发送给模型提供方':'Context is sent to your model provider'}</span></>}</div>
-   {error&&<div role="alert" className="error global-error"><span>{error}</span><button onClick={()=>setError('')}><X size={16}/></button></div>}
-   {pending.length>0&&<button className="proposal-banner" onClick={()=>setProposalId(pending[0].id)}><Sparkles size={17}/>{t('Pending proposals')} · {pending.length}<ArrowRight size={16}/></button>}
-   {lastApplied&&<div className="undo-bar"><Check size={14}/>{lastApplied.summary}<button onClick={()=>void act(()=>api('undoProposal',lastApplied.id),'Saved')}><Undo2 size={14}/>{t('Undo')}</button></div>}
-   <div className="task-toolbar"><span>{t('To do')}<span className="count-pill">{rows.length}</span></span><button onClick={()=>setShowDone(!showDone)}>{t(showDone?'Hide completed':'Show completed')}</button></div>
-   <div className="quick-add"><Plus size={20}/><input aria-label="New task" placeholder={t('Add a task… e.g. 明天下午交周报')} value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void addTask()}}/><button disabled={!newTask.trim()||!lists.length} onClick={()=>void addTask()}>{t('Add task')}<span>↵</span></button></div>
-   <div className="task-list">{rows.length?rows.map(({task:item,occurrence,template})=><div key={item.id+(occurrence?.occurrence_key||'')} className={`task-row ${selected===item.id?'selected':''} ${item.status==='done'?'completed':''}`}><button className={`check-button ${item.priority} ${item.status==='done'?'checked':''}`} disabled={template} aria-label={`${item.status==='done'?t('Reopen'):t('Completed')} ${item.title}`} onClick={()=>void act(()=>occurrence?api('updateOccurrence',occurrence.series_id,occurrence.occurrence_key,{status:item.status==='done'?'todo':'done'}):api('updateTask',item.id,item.version,{status:item.status==='done'?'todo':'done'}))}>{item.status==='done'&&<Check size={13}/>}</button><button className="task-body" onClick={()=>setSelected(item.id)}><span className="task-title">{item.title}{template&&<span className="pill">{t('Recurring template')}</span>}{occurrence&&<Repeat2 size={13}/>}</span><span className="task-meta">{!currentList&&<span>{lists.find(l=>l.id===item.list_id)?.name}</span>}{item.tags.map(tag=><span className="tag" key={tag}>#{tag}</span>)}{tasks.some(t=>t.parent_id===item.id)&&<span><ListChecks size={12}/>{tasks.filter(t=>t.parent_id===item.id&&t.status==='done').length}/{tasks.filter(t=>t.parent_id===item.id).length}</span>}</span></button><span className={`task-date ${isOverdue(item,zone)&&item.status==='todo'?'overdue':''}`}>{item.reminder_at&&<Bell size={12}/>} {dateLabel(item)}</span><span className={`priority-dot ${item.priority}`}/></div>):<div className="empty"><div className="empty-art"><div className="paper"><span/><span/><span/><Check size={23}/></div><span className="orbit one"/><span className="orbit two"/></div><h3>{t('All done for now')}</h3><p>{t('A little space for your next idea.')}</p></div>}</div>
-   <footer className="view-footer"><span className="tiny-mark">t.</span>{isZh?'把想法放下来，把日子过轻一点。':'Less on your mind. More room for your day.'}</footer>
-  </div></main>
-  {task&&<TaskDetail key={task.id+':'+task.version} task={task} data={data} zone={zone} t={t} close={()=>setSelected(null)} act={act} selectTask={setSelected} requestDelete={()=>setConfirm({message:t('Delete this task and its subtasks?'),run:async()=>{await api('deleteTask',task.id,task.version);setSelected(null)}})}/>}
-  {toast&&<div className="toast"><Check size={16}/>{toast}</div>}
-  {settingsOpen&&<SettingsDialog data={data} t={t} close={()=>setSettingsOpen(false)} act={act}/>}
-  {listDialog&&<div className="overlay"><form className="dialog small" onSubmit={e=>{e.preventDefault();void act(async()=>{if(listDialog.id)await api('updateList',listDialog.id,{name:listDialog.name});else await api('createList',listDialog.name,'#7180ea');setListDialog(null)})}}><h2>{t(listDialog.id?'Rename list':'New list')}</h2><label>{t('Name')}<input autoFocus required maxLength={100} value={listDialog.name} onChange={e=>setListDialog({...listDialog,name:e.target.value})}/></label><div className="dialog-actions"><button type="button" onClick={()=>setListDialog(null)}>{t('Cancel')}</button><button className="primary" type="submit">{t('Save changes')}</button></div></form></div>}
-  {proposal&&<ProposalDialog proposal={proposal} tasks={tasks} lists={lists} t={t} close={()=>setProposalId(null)} act={act}/>}
-  {confirm&&<div className="overlay"><div className="dialog small"><h2>{confirm.message}</h2><div className="dialog-actions"><button onClick={()=>setConfirm(null)}>{t('Cancel')}</button><button className="danger primary" onClick={()=>void act(async()=>{await confirm.run();setConfirm(null)})}>{t('Delete')}</button></div></div></div>}
- </div>
+  async function ask() {
+    if (!speech.trim()) return;
+    setBusy(true);
+    setProgress("");
+    await act(async () => {
+      const id = await api<string>(
+        "ask",
+        speech,
+        currentList?.id || lists[0]?.id,
+      );
+      setProposalId(id);
+      setSpeech("");
+    });
+    setBusy(false);
+  }
+  const dateLabel = (item: Task) => {
+    if (item.due_kind === "datetime" && item.due_at)
+      return new Intl.DateTimeFormat(isZh ? "zh-CN" : "en", {
+        timeZone: item.time_zone || zone,
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(item.due_at));
+    return item.due_date || item.planned_date || "";
+  };
+  if (!data)
+    return (
+      <div className="loading">
+        <div className="brand-mark">t.</div>
+        <p>{error || "Telldo"}</p>
+        <LoaderCircle className="spin" />
+      </div>
+    );
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">t.</div>
+          <span>
+            Telldo<span className="beta">BETA</span>
+          </span>
+        </div>
+        <div className="workspace">
+          <div className="avatar">{isZh ? "我" : "M"}</div>
+          <div>
+            <strong>{isZh ? "我的空间" : "My workspace"}</strong>
+            <small>{isZh ? "只属于你的日常" : "A space of your own"}</small>
+          </div>
+          <span className="local-dot" />
+        </div>
+        <nav>
+          {[
+            ["today", "Today", Sun],
+            ["planned", "Planned", CalendarDays],
+            ["anytime", "Anytime", Layers],
+          ].map(([id, label, Icon]) => {
+            const I = Icon as typeof Sun;
+            return (
+              <button
+                key={String(id)}
+                className={`nav-item ${view === id ? "active" : ""}`}
+                onClick={() => {
+                  setView(String(id));
+                  setSearch("");
+                }}
+              >
+                <I size={18} />
+                <span>{t(String(label))}</span>
+                <small>
+                  {
+                    allRows.filter(
+                      ({ task: a, template }) =>
+                        !template && taskInView(a, String(id), zone),
+                    ).length
+                  }
+                </small>
+              </button>
+            );
+          })}
+        </nav>
+        <div className="section-label">
+          {t("MY LISTS")}
+          <button
+            aria-label={t("New list")}
+            onClick={() => setListDialog({ name: "" })}
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+        <div className="list-nav">
+          {lists.map((list) => (
+            <button
+              className={`nav-item ${view === list.id ? "active" : ""}`}
+              key={list.id}
+              onClick={() => {
+                setView(list.id);
+                setSearch("");
+              }}
+            >
+              <span className="list-dot" style={{ background: list.color }} />
+              <span>{list.name}</span>
+              <small>
+                {
+                  allRows.filter(
+                    ({ task: t, template }) =>
+                      !template && t.list_id === list.id && t.status === "todo",
+                  ).length
+                }
+              </small>
+            </button>
+          ))}
+        </div>
+        <button
+          className="new-list"
+          onClick={() => setListDialog({ name: "" })}
+        >
+          <Plus size={16} />
+          {t("New list")}
+        </button>
+        <div className="sidebar-bottom">
+          <div className="local-note">
+            <span className="local-dot" />
+            {t("Local first. Room to think.")}
+          </div>
+          <button className="nav-item" onClick={() => setSettingsOpen(true)}>
+            <SettingsIcon size={18} />
+            {t("Settings")}
+          </button>
+        </div>
+      </aside>
+      <main>
+        <header className="topbar">
+          <div className="breadcrumb">
+            {isZh ? "我的空间" : "My workspace"}
+            <span>/</span>
+            <strong>
+              {search
+                ? t("Search tasks, notes, tags…")
+                : currentList?.name ||
+                  t(
+                    view === "today"
+                      ? "Today"
+                      : view === "planned"
+                        ? "Planned"
+                        : "Anytime",
+                  )}
+            </strong>
+          </div>
+          <label className="search">
+            <Search size={17} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t("Search tasks, notes, tags…")}
+            />
+            {search && (
+              <button onClick={() => setSearch("")}>
+                <X size={14} />
+              </button>
+            )}
+          </label>
+        </header>
+        <div className="content">
+          <div className="view-heading">
+            <div className="eyebrow">
+              {new Intl.DateTimeFormat(isZh ? "zh-CN" : "en", {
+                timeZone: zone,
+                month: "long",
+                day: "numeric",
+                weekday: "long",
+              }).format(new Date())}
+            </div>
+            <div className="heading-line">
+              <h1>
+                {search
+                  ? `${isZh ? "搜索" : "Search"} · ${search}`
+                  : currentList?.name ||
+                    t(
+                      view === "today"
+                        ? "Today’s focus"
+                        : view === "planned"
+                          ? "Planned"
+                          : "Anytime",
+                    )}
+              </h1>
+              {currentList && (
+                <div className="heading-actions">
+                  <button
+                    title={t("Rename list")}
+                    onClick={() =>
+                      setListDialog({
+                        id: currentList.id,
+                        name: currentList.name,
+                      })
+                    }
+                  >
+                    <MoreHorizontal size={20} />
+                  </button>
+                  <button
+                    title={t("Delete list")}
+                    onClick={() =>
+                      setConfirm({
+                        message: t("Delete this list and its tasks?"),
+                        run: async () => {
+                          await api("deleteList", currentList.id);
+                          setView("today");
+                        },
+                      })
+                    }
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
+            <p>
+              {t(
+                view === "today"
+                  ? "Every small step counts."
+                  : view === "planned"
+                    ? "A little planning goes a long way."
+                    : view === "anytime"
+                      ? "Ideas without a deadline."
+                      : "Your space to get things done.",
+              )}
+              <span className="task-total">
+                {rows.filter((r) => r.task.status === "todo").length}{" "}
+                {t("tasks")}
+              </span>
+            </p>
+          </div>
+          <section
+            className={`ai-bar ${!data.capabilities?.available ? "unavailable" : ""}`}
+          >
+            <Sparkles size={21} />
+            <input
+              aria-label="Tell Telldo"
+              value={speech}
+              onChange={(e) => setSpeech(e.target.value)}
+              placeholder={t("Tell Telldo what’s on your mind…")}
+              disabled={!data.capabilities?.available || busy}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void ask();
+              }}
+            />
+            {busy ? (
+              <button onClick={() => void act(() => api("cancelAI"))}>
+                {t("Cancel")}
+              </button>
+            ) : (
+              <button
+                className="ai-submit"
+                aria-label="Send to Codex"
+                disabled={!data.capabilities?.available || !speech.trim()}
+                onClick={() => void ask()}
+              >
+                <ArrowRight size={18} />
+              </button>
+            )}
+          </section>
+          <div className="ai-caption">
+            {busy ? (
+              <>
+                <LoaderCircle size={12} className="spin" />
+                {t("Working…")} {progress.slice(0, 100)}
+              </>
+            ) : !data.capabilities?.available ? (
+              <>
+                <span>{data.capabilities?.reason || "Checking Codex…"}</span>
+                <button onClick={() => setSettingsOpen(true)}>
+                  {t("Settings")}
+                  <ArrowUpRight size={12} />
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="local-dot" />
+                Codex ·{" "}
+                {isZh ? "一句话，安排妥当" : "A few words. A clearer day."}
+                <span className="privacy-hint">
+                  {isZh
+                    ? "上下文将发送给模型提供方"
+                    : "Context is sent to your model provider"}
+                </span>
+              </>
+            )}
+          </div>
+          {error && (
+            <div role="alert" className="error global-error">
+              <span>{error}</span>
+              <button onClick={() => setError("")}>
+                <X size={16} />
+              </button>
+            </div>
+          )}
+          {pending.length > 0 && (
+            <button
+              className="proposal-banner"
+              onClick={() => setProposalId(pending[0].id)}
+            >
+              <Sparkles size={17} />
+              {t("Pending proposals")} · {pending.length}
+              <ArrowRight size={16} />
+            </button>
+          )}
+          {lastApplied && (
+            <div className="undo-bar">
+              <Check size={14} />
+              {lastApplied.summary}
+              <button
+                onClick={() =>
+                  void act(() => api("undoProposal", lastApplied.id), "Saved")
+                }
+              >
+                <Undo2 size={14} />
+                {t("Undo")}
+              </button>
+            </div>
+          )}
+          <div className="task-toolbar">
+            <span>
+              {t("To do")}
+              <span className="count-pill">{rows.length}</span>
+            </span>
+            <button onClick={() => setShowDone(!showDone)}>
+              {t(showDone ? "Hide completed" : "Show completed")}
+            </button>
+          </div>
+          <div className="quick-add">
+            <Plus size={20} />
+            <input
+              aria-label="New task"
+              placeholder={t("Add a task… e.g. 明天下午交周报")}
+              value={newTask}
+              onChange={(e) => setNewTask(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void addTask();
+              }}
+            />
+            <button
+              disabled={!newTask.trim() || !lists.length}
+              onClick={() => void addTask()}
+            >
+              {t("Add task")}
+              <span>↵</span>
+            </button>
+          </div>
+          <div className="task-list">
+            {rows.length ? (
+              rows.map(({ task: item, occurrence, template }) => (
+                <div
+                  key={item.id + (occurrence?.occurrence_key || "")}
+                  className={`task-row ${selected === item.id ? "selected" : ""} ${item.status === "done" ? "completed" : ""}`}
+                >
+                  <button
+                    className={`check-button ${item.priority} ${item.status === "done" ? "checked" : ""}`}
+                    disabled={template}
+                    aria-label={`${item.status === "done" ? t("Reopen") : t("Completed")} ${item.title}`}
+                    onClick={() =>
+                      void act(() =>
+                        occurrence
+                          ? api(
+                              "updateOccurrence",
+                              occurrence.series_id,
+                              occurrence.occurrence_key,
+                              {
+                                status:
+                                  item.status === "done" ? "todo" : "done",
+                              },
+                            )
+                          : api("updateTask", item.id, item.version, {
+                              status: item.status === "done" ? "todo" : "done",
+                            }),
+                      )
+                    }
+                  >
+                    {item.status === "done" && <Check size={13} />}
+                  </button>
+                  <button
+                    className="task-body"
+                    onClick={() => setSelected(item.id)}
+                  >
+                    <span className="task-title">
+                      {item.title}
+                      {template && (
+                        <span className="pill">{t("Recurring template")}</span>
+                      )}
+                      {occurrence && <Repeat2 size={13} />}
+                    </span>
+                    <span className="task-meta">
+                      {!currentList && (
+                        <span>
+                          {lists.find((l) => l.id === item.list_id)?.name}
+                        </span>
+                      )}
+                      {item.tags.map((tag) => (
+                        <span className="tag" key={tag}>
+                          #{tag}
+                        </span>
+                      ))}
+                      {tasks.some((t) => t.parent_id === item.id) && (
+                        <span>
+                          <ListChecks size={12} />
+                          {
+                            tasks.filter(
+                              (t) =>
+                                t.parent_id === item.id && t.status === "done",
+                            ).length
+                          }
+                          /{tasks.filter((t) => t.parent_id === item.id).length}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  <span
+                    className={`task-date ${isOverdue(item, zone) && item.status === "todo" ? "overdue" : ""}`}
+                  >
+                    {item.reminder_at && <Bell size={12} />} {dateLabel(item)}
+                  </span>
+                  <span className={`priority-dot ${item.priority}`} />
+                </div>
+              ))
+            ) : (
+              <div className="empty">
+                <div className="empty-art">
+                  <div className="paper">
+                    <span />
+                    <span />
+                    <span />
+                    <Check size={23} />
+                  </div>
+                  <span className="orbit one" />
+                  <span className="orbit two" />
+                </div>
+                <h3>{t("All done for now")}</h3>
+                <p>{t("A little space for your next idea.")}</p>
+              </div>
+            )}
+          </div>
+          <footer className="view-footer">
+            <span className="tiny-mark">t.</span>
+            {isZh
+              ? "把想法放下来，把日子过轻一点。"
+              : "Less on your mind. More room for your day."}
+          </footer>
+        </div>
+      </main>
+      {task && (
+        <TaskDetail
+          key={task.id + ":" + task.version}
+          task={task}
+          data={data}
+          zone={zone}
+          t={t}
+          close={() => setSelected(null)}
+          act={act}
+          selectTask={setSelected}
+          requestDelete={() =>
+            setConfirm({
+              message: t("Delete this task and its subtasks?"),
+              run: async () => {
+                await api("deleteTask", task.id, task.version);
+                setSelected(null);
+              },
+            })
+          }
+        />
+      )}
+      {toast && (
+        <div className="toast">
+          <Check size={16} />
+          {toast}
+        </div>
+      )}
+      {settingsOpen && (
+        <SettingsDialog
+          data={data}
+          t={t}
+          close={() => setSettingsOpen(false)}
+          act={act}
+        />
+      )}
+      {listDialog && (
+        <div className="overlay">
+          <form
+            className="dialog small"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void act(async () => {
+                if (listDialog.id)
+                  await api("updateList", listDialog.id, {
+                    name: listDialog.name,
+                  });
+                else await api("createList", listDialog.name, "#7180ea");
+                setListDialog(null);
+              });
+            }}
+          >
+            <h2>{t(listDialog.id ? "Rename list" : "New list")}</h2>
+            <label>
+              {t("Name")}
+              <input
+                autoFocus
+                required
+                maxLength={100}
+                value={listDialog.name}
+                onChange={(e) =>
+                  setListDialog({ ...listDialog, name: e.target.value })
+                }
+              />
+            </label>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setListDialog(null)}>
+                {t("Cancel")}
+              </button>
+              <button className="primary" type="submit">
+                {t("Save changes")}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {proposal && (
+        <ProposalDialog
+          proposal={proposal}
+          tasks={tasks}
+          lists={lists}
+          t={t}
+          close={() => setProposalId(null)}
+          act={act}
+        />
+      )}
+      {confirm && (
+        <div className="overlay">
+          <div className="dialog small">
+            <h2>{confirm.message}</h2>
+            <div className="dialog-actions">
+              <button onClick={() => setConfirm(null)}>{t("Cancel")}</button>
+              <button
+                className="danger primary"
+                onClick={() =>
+                  void act(async () => {
+                    await confirm.run();
+                    setConfirm(null);
+                  })
+                }
+              >
+                {t("Delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
-function TaskDetail({task,data,zone,t,close,act,requestDelete,selectTask}:{task:Task;data:Snapshot;zone:string;t:(s:string)=>string;close:()=>void;act:(f:()=>Promise<unknown>,m?:string)=>Promise<void>;requestDelete:()=>void;selectTask:(id:string)=>void}){
- const [draft,setDraft]=useState<TaskPatch>({...task}),[natural,setNatural]=useState(''),[sub,setSub]=useState(''),[repeat,setRepeat]=useState(''),[byday,setByday]=useState('MO'),[monthday,setMonthday]=useState('31'),[position,setPosition]=useState('1'),[until,setUntil]=useState(''),[count,setCount]=useState(''),[occurrenceLimit,setOccurrenceLimit]=useState(12)
- const [tagText,setTagText]=useState(task.tags.join(', '))
- const series=data.recurrences.find(r=>r.task_id===task.id),set=(key:keyof TaskPatch,value:unknown)=>setDraft(d=>({...d,[key]:value}))
- const visibleOccurrences=data.occurrences.filter(o=>o.series_id===series?.id)
- const save=()=>act(()=>api('updateTask',task.id,task.version,{title:draft.title,notes:draft.notes,list_id:draft.list_id,priority:draft.priority,due_kind:draft.due_kind,due_date:draft.due_kind==='none'?null:draft.due_date,due_at:draft.due_kind==='datetime'?draft.due_at:null,time_zone:draft.due_kind==='datetime'?(draft.time_zone||zone):null,planned_date:draft.planned_date||null,reminder_at:draft.reminder_at||null,tags:tagText.split(/[,，]/).map(s=>s.trim()).filter(Boolean)}),'Saved')
- async function setRecurring(){let rule=repeat==='daily'?'FREQ=DAILY':repeat==='weekdays'?'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR':repeat==='weekly'?`FREQ=WEEKLY;BYDAY=${byday}`:repeat==='monthly'?`FREQ=MONTHLY;BYMONTHDAY=${monthday}`:`FREQ=MONTHLY;BYDAY=${position}${byday}`;await act(()=>api('setRecurrence',task.id,{rrule:rule,dtstart:task.due_kind==='datetime'?DateTime.fromISO(task.due_at!).setZone(task.time_zone||zone).toFormat("yyyy-MM-dd'T'HH:mm:ss"):task.due_date||localDay(zone),tzid:task.time_zone||zone,until:until||null,count:count?Number(count):null,exdates:[]}),'Saved')}
- return <aside className="detail"><div className="detail-top"><span>{t('TASK DETAILS')}</span><button onClick={close} aria-label="Close details"><X size={18}/></button></div><div className="detail-scroll"><textarea className="detail-title" aria-label={t('Title')} value={draft.title} onChange={e=>set('title',e.target.value)} rows={2}/>{series&&<div className="pill"><Repeat2 size={12}/>{t('Recurring template')}</div>}<label>{t('Notes')}<textarea placeholder={t('Add a little context…')} value={draft.notes} onChange={e=>set('notes',e.target.value)} rows={4}/></label><div className="form-grid"><label>{t('List')}<select value={draft.list_id} onChange={e=>set('list_id',e.target.value)}>{data.lists.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></label><label>{t('Priority')}<select value={draft.priority} onChange={e=>set('priority',e.target.value)}>{['none','low','medium','high'].map(v=><option key={v} value={v}>{t(v[0].toUpperCase()+v.slice(1))}</option>)}</select></label></div>{series&&<p className="notice">{t('Remove repeat before changing its date or time zone.')}</p>}<label>{t('Natural date')}<div className="inline-input"><input disabled={!!series} placeholder="明天下午 3 点 / 下周五" value={natural} onChange={e=>setNatural(e.target.value)}/><button disabled={!!series} onClick={()=>void act(async()=>{const parsed=await api<TaskPatch>('parseDate',natural);setDraft(d=>({...d,due_kind:parsed.due_kind,due_date:parsed.due_date,due_at:parsed.due_at,time_zone:parsed.time_zone}))})}>{t('Parse')}</button></div></label><label>{t('Due date')}<select disabled={!!series} value={draft.due_kind} onChange={e=>setDraft(d=>({...d,due_kind:e.target.value as Task['due_kind'],due_date:d.due_date||localDay(zone)}))}><option value="none">{t('No date')}</option><option value="date">{t('Date only')}</option><option value="datetime">{t('Date & time')}</option></select></label>{draft.due_kind==='date'&&<input disabled={!!series} type="date" aria-label="Due calendar date" value={draft.due_date||''} onChange={e=>set('due_date',e.target.value)}/>}{draft.due_kind==='datetime'&&<><label>{t('Date & time')}<input disabled={!!series} type="datetime-local" value={draft.due_at?DateTime.fromISO(draft.due_at).setZone(draft.time_zone||zone).toFormat("yyyy-MM-dd'T'HH:mm"):''} onChange={e=>{const dt=DateTime.fromISO(e.target.value,{zone:draft.time_zone||zone});setDraft(d=>({...d,due_at:dt.toUTC().toISO(),due_date:dt.toISODate(),time_zone:d.time_zone||zone}))}}/></label><label>{t('Timezone (IANA)')}<input disabled={!!series} value={draft.time_zone||zone} onChange={e=>setDraft(d=>({...d,time_zone:e.target.value,due_date:d.due_at&&DateTime.fromISO(d.due_at).setZone(e.target.value).isValid?DateTime.fromISO(d.due_at).setZone(e.target.value).toISODate():d.due_date}))}/></label></>}<div className="form-grid"><label>{t('Planned date')}<input type="date" value={draft.planned_date||''} onChange={e=>set('planned_date',e.target.value)}/></label><label>{t('Reminder')}<input aria-label="Reminder" type="datetime-local" value={draft.reminder_at?DateTime.fromISO(draft.reminder_at).setZone(draft.time_zone||zone).toFormat("yyyy-MM-dd'T'HH:mm"):''} onChange={e=>set('reminder_at',e.target.value?DateTime.fromISO(e.target.value,{zone:draft.time_zone||zone}).toUTC().toISO():null)}/></label></div><label>{t('Tags')}<input placeholder={t('Comma separated')} value={tagText} onChange={e=>setTagText(e.target.value)}/></label><button className="primary full" onClick={()=>void save()}>{t('Save changes')}</button>
- <section className="detail-section"><h3><ListChecks size={16}/>{t('Subtasks')}</h3>{!task.parent_id&&<>{data.tasks.filter(s=>s.parent_id===task.id).map(s=><div className="subtask" key={s.id}><button className={`check-button ${s.status==='done'?'checked':''}`} onClick={()=>void act(()=>api('updateTask',s.id,s.version,{status:s.status==='todo'?'done':'todo'}))}>{s.status==='done'&&<Check size={12}/>}</button><button aria-label="Open subtask details" onClick={()=>selectTask(s.id)}><ArrowUpRight size={13}/></button><input aria-label="Subtask title" defaultValue={s.title} onBlur={e=>{if(e.target.value!==s.title)void act(()=>api('updateTask',s.id,s.version,{title:e.target.value}))}}/><button aria-label="Delete subtask" onClick={()=>void act(()=>api('deleteTask',s.id,s.version))}><X size={13}/></button></div>)}<div className="inline-input"><input value={sub} onChange={e=>setSub(e.target.value)} placeholder={t('Add subtask')} onKeyDown={e=>{if(e.key==='Enter'&&sub.trim())void act(async()=>{await api('createTask',{list_id:task.list_id,parent_id:task.id,title:sub});setSub('')})}}/><button disabled={!sub.trim()} onClick={()=>void act(async()=>{await api('createTask',{list_id:task.list_id,parent_id:task.id,title:sub});setSub('')})}><Plus size={16}/></button></div></>}</section>
- {!task.parent_id&&<section className="detail-section"><h3><Repeat2 size={16}/>{t('Repeat')}</h3>{series&&<><code>{series.rrule}</code><button className="text-button" onClick={()=>void act(()=>api('removeRecurrence',task.id))}>{t('Remove repeat')}</button></>}<select value={repeat} onChange={e=>setRepeat(e.target.value)}>{[['','Does not repeat'],['daily','Daily'],['weekdays','Weekdays'],['weekly','Weekly'],['monthly','Monthly'],['monthlyWeekday','Monthly weekday']].map(([v,l])=><option value={v} key={v}>{t(l)}</option>)}</select>{repeat&&<>{(repeat==='weekly'||repeat==='monthlyWeekday')&&<label>{t('Weekday')}<input value={byday} onChange={e=>setByday(e.target.value.toUpperCase())} placeholder={t('Use commas, e.g. MO,WE,FR')}/></label>}{repeat==='monthly'&&<label>{t('Month day')}<input type="number" min={1} max={31} value={monthday} onChange={e=>setMonthday(e.target.value)}/></label>}{repeat==='monthlyWeekday'&&<label>{t('Week position')}<select value={position} onChange={e=>setPosition(e.target.value)}>{['1','2','3','4','-1'].map(v=><option value={v} key={v}>{v}</option>)}</select></label>}<div className="form-grid"><label>{t('Until')}<input type="date" value={until} onChange={e=>{setUntil(e.target.value);setCount('')}}/></label><label>{t('Count')}<input type="number" min="1" max="10000" value={count} onChange={e=>{setCount(e.target.value);setUntil('')}}/></label></div><button className="secondary full" onClick={()=>void setRecurring()}>{t('Set repeat')}</button></>}{series&&<><h4>{t('Upcoming occurrences')}</h4>{visibleOccurrences.slice(0,occurrenceLimit).map(o=><div className="occurrence" key={o.occurrence_key}><input aria-label={t('Reschedule instance')} type="date" value={o.override_date||o.due_date} onChange={e=>void act(()=>api('updateOccurrence',o.series_id,o.occurrence_key,{override_date:e.target.value}))}/><select aria-label="Occurrence status" value={o.status} onChange={e=>void act(()=>api('updateOccurrence',o.series_id,o.occurrence_key,{status:e.target.value}))}><option value="todo">{t('To do')}</option><option value="done">{t('Done')}</option><option value="skipped">{t('Skip')}</option></select></div>)}{visibleOccurrences.length>occurrenceLimit&&<button className="secondary full" onClick={()=>setOccurrenceLimit(n=>n+24)}>{t('Show more occurrences')} ({visibleOccurrences.length-occurrenceLimit})</button>}</>}</section>}
- <button className="delete-task" onClick={requestDelete}><Trash2 size={15}/>{t('Delete task')}</button></div></aside>
+function TaskDetail({
+  task,
+  data,
+  zone,
+  t,
+  close,
+  act,
+  requestDelete,
+  selectTask,
+}: {
+  task: Task;
+  data: Snapshot;
+  zone: string;
+  t: (s: string) => string;
+  close: () => void;
+  act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
+  requestDelete: () => void;
+  selectTask: (id: string) => void;
+}) {
+  const [draft, setDraft] = useState<TaskPatch>({ ...task }),
+    [natural, setNatural] = useState(""),
+    [sub, setSub] = useState(""),
+    [repeat, setRepeat] = useState(""),
+    [byday, setByday] = useState("MO"),
+    [monthday, setMonthday] = useState("31"),
+    [position, setPosition] = useState("1"),
+    [until, setUntil] = useState(""),
+    [count, setCount] = useState(""),
+    [occurrenceLimit, setOccurrenceLimit] = useState(12);
+  const [tagText, setTagText] = useState(task.tags.join(", "));
+  const series = data.recurrences.find((r) => r.task_id === task.id),
+    set = (key: keyof TaskPatch, value: unknown) =>
+      setDraft((d) => ({ ...d, [key]: value }));
+  const visibleOccurrences = data.occurrences.filter(
+    (o) => o.series_id === series?.id,
+  );
+  const save = () =>
+    act(
+      () =>
+        api("updateTask", task.id, task.version, {
+          title: draft.title,
+          notes: draft.notes,
+          list_id: draft.list_id,
+          priority: draft.priority,
+          due_kind: draft.due_kind,
+          due_date: draft.due_kind === "none" ? null : draft.due_date,
+          due_at: draft.due_kind === "datetime" ? draft.due_at : null,
+          time_zone:
+            draft.due_kind === "datetime" ? draft.time_zone || zone : null,
+          planned_date: draft.planned_date || null,
+          reminder_at: draft.reminder_at || null,
+          tags: tagText
+            .split(/[,，]/)
+            .map((s) => s.trim())
+            .filter(Boolean),
+        }),
+      "Saved",
+    );
+  async function setRecurring() {
+    let rule =
+      repeat === "daily"
+        ? "FREQ=DAILY"
+        : repeat === "weekdays"
+          ? "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+          : repeat === "weekly"
+            ? `FREQ=WEEKLY;BYDAY=${byday}`
+            : repeat === "monthly"
+              ? `FREQ=MONTHLY;BYMONTHDAY=${monthday}`
+              : `FREQ=MONTHLY;BYDAY=${position}${byday}`;
+    await act(
+      () =>
+        api("setRecurrence", task.id, {
+          rrule: rule,
+          dtstart:
+            task.due_kind === "datetime"
+              ? DateTime.fromISO(task.due_at!)
+                  .setZone(task.time_zone || zone)
+                  .toFormat("yyyy-MM-dd'T'HH:mm:ss")
+              : task.due_date || localDay(zone),
+          tzid: task.time_zone || zone,
+          until: until || null,
+          count: count ? Number(count) : null,
+          exdates: [],
+        }),
+      "Saved",
+    );
+  }
+  return (
+    <aside className="detail">
+      <div className="detail-top">
+        <span>{t("TASK DETAILS")}</span>
+        <button onClick={close} aria-label="Close details">
+          <X size={18} />
+        </button>
+      </div>
+      <div className="detail-scroll">
+        <textarea
+          className="detail-title"
+          aria-label={t("Title")}
+          value={draft.title}
+          onChange={(e) => set("title", e.target.value)}
+          rows={2}
+        />
+        {series && (
+          <div className="pill">
+            <Repeat2 size={12} />
+            {t("Recurring template")}
+          </div>
+        )}
+        <label>
+          {t("Notes")}
+          <textarea
+            placeholder={t("Add a little context…")}
+            value={draft.notes}
+            onChange={(e) => set("notes", e.target.value)}
+            rows={4}
+          />
+        </label>
+        <div className="form-grid">
+          <label>
+            {t("List")}
+            <select
+              value={draft.list_id}
+              onChange={(e) => set("list_id", e.target.value)}
+            >
+              {data.lists.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t("Priority")}
+            <select
+              value={draft.priority}
+              onChange={(e) => set("priority", e.target.value)}
+            >
+              {["none", "low", "medium", "high"].map((v) => (
+                <option key={v} value={v}>
+                  {t(v[0].toUpperCase() + v.slice(1))}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {series && (
+          <p className="notice">
+            {t("Remove repeat before changing its date or time zone.")}
+          </p>
+        )}
+        <label>
+          {t("Natural date")}
+          <div className="inline-input">
+            <input
+              disabled={!!series}
+              placeholder="明天下午 3 点 / 下周五"
+              value={natural}
+              onChange={(e) => setNatural(e.target.value)}
+            />
+            <button
+              disabled={!!series}
+              onClick={() =>
+                void act(async () => {
+                  const parsed = await api<TaskPatch>("parseDate", natural);
+                  setDraft((d) => ({
+                    ...d,
+                    due_kind: parsed.due_kind,
+                    due_date: parsed.due_date,
+                    due_at: parsed.due_at,
+                    time_zone: parsed.time_zone,
+                  }));
+                })
+              }
+            >
+              {t("Parse")}
+            </button>
+          </div>
+        </label>
+        <label>
+          {t("Due date")}
+          <select
+            disabled={!!series}
+            value={draft.due_kind}
+            onChange={(e) =>
+              setDraft((d) => ({
+                ...d,
+                due_kind: e.target.value as Task["due_kind"],
+                due_date: d.due_date || localDay(zone),
+              }))
+            }
+          >
+            <option value="none">{t("No date")}</option>
+            <option value="date">{t("Date only")}</option>
+            <option value="datetime">{t("Date & time")}</option>
+          </select>
+        </label>
+        {draft.due_kind === "date" && (
+          <input
+            disabled={!!series}
+            type="date"
+            aria-label="Due calendar date"
+            value={draft.due_date || ""}
+            onChange={(e) => set("due_date", e.target.value)}
+          />
+        )}
+        {draft.due_kind === "datetime" && (
+          <>
+            <label>
+              {t("Date & time")}
+              <input
+                disabled={!!series}
+                type="datetime-local"
+                value={
+                  draft.due_at
+                    ? DateTime.fromISO(draft.due_at)
+                        .setZone(draft.time_zone || zone)
+                        .toFormat("yyyy-MM-dd'T'HH:mm")
+                    : ""
+                }
+                onChange={(e) => {
+                  const dt = DateTime.fromISO(e.target.value, {
+                    zone: draft.time_zone || zone,
+                  });
+                  setDraft((d) => ({
+                    ...d,
+                    due_at: dt.toUTC().toISO(),
+                    due_date: dt.toISODate(),
+                    time_zone: d.time_zone || zone,
+                  }));
+                }}
+              />
+            </label>
+            <label>
+              {t("Timezone (IANA)")}
+              <input
+                disabled={!!series}
+                value={draft.time_zone || zone}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    time_zone: e.target.value,
+                    due_date:
+                      d.due_at &&
+                      DateTime.fromISO(d.due_at).setZone(e.target.value).isValid
+                        ? DateTime.fromISO(d.due_at)
+                            .setZone(e.target.value)
+                            .toISODate()
+                        : d.due_date,
+                  }))
+                }
+              />
+            </label>
+          </>
+        )}
+        <div className="form-grid">
+          <label>
+            {t("Planned date")}
+            <input
+              type="date"
+              value={draft.planned_date || ""}
+              onChange={(e) => set("planned_date", e.target.value)}
+            />
+          </label>
+          <label>
+            {t("Reminder")}
+            <input
+              aria-label="Reminder"
+              type="datetime-local"
+              value={
+                draft.reminder_at
+                  ? DateTime.fromISO(draft.reminder_at)
+                      .setZone(draft.time_zone || zone)
+                      .toFormat("yyyy-MM-dd'T'HH:mm")
+                  : ""
+              }
+              onChange={(e) =>
+                set(
+                  "reminder_at",
+                  e.target.value
+                    ? DateTime.fromISO(e.target.value, {
+                        zone: draft.time_zone || zone,
+                      })
+                        .toUTC()
+                        .toISO()
+                    : null,
+                )
+              }
+            />
+          </label>
+        </div>
+        <label>
+          {t("Tags")}
+          <input
+            placeholder={t("Comma separated")}
+            value={tagText}
+            onChange={(e) => setTagText(e.target.value)}
+          />
+        </label>
+        <button className="primary full" onClick={() => void save()}>
+          {t("Save changes")}
+        </button>
+        <section className="detail-section">
+          <h3>
+            <ListChecks size={16} />
+            {t("Subtasks")}
+          </h3>
+          {!task.parent_id && (
+            <>
+              {data.tasks
+                .filter((s) => s.parent_id === task.id)
+                .map((s) => (
+                  <div className="subtask" key={s.id}>
+                    <button
+                      className={`check-button ${s.status === "done" ? "checked" : ""}`}
+                      onClick={() =>
+                        void act(() =>
+                          api("updateTask", s.id, s.version, {
+                            status: s.status === "todo" ? "done" : "todo",
+                          }),
+                        )
+                      }
+                    >
+                      {s.status === "done" && <Check size={12} />}
+                    </button>
+                    <button
+                      aria-label="Open subtask details"
+                      onClick={() => selectTask(s.id)}
+                    >
+                      <ArrowUpRight size={13} />
+                    </button>
+                    <input
+                      aria-label="Subtask title"
+                      defaultValue={s.title}
+                      onBlur={(e) => {
+                        if (e.target.value !== s.title)
+                          void act(() =>
+                            api("updateTask", s.id, s.version, {
+                              title: e.target.value,
+                            }),
+                          );
+                      }}
+                    />
+                    <button
+                      aria-label="Delete subtask"
+                      onClick={() =>
+                        void act(() => api("deleteTask", s.id, s.version))
+                      }
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              <div className="inline-input">
+                <input
+                  value={sub}
+                  onChange={(e) => setSub(e.target.value)}
+                  placeholder={t("Add subtask")}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && sub.trim())
+                      void act(async () => {
+                        await api("createTask", {
+                          list_id: task.list_id,
+                          parent_id: task.id,
+                          title: sub,
+                        });
+                        setSub("");
+                      });
+                  }}
+                />
+                <button
+                  disabled={!sub.trim()}
+                  onClick={() =>
+                    void act(async () => {
+                      await api("createTask", {
+                        list_id: task.list_id,
+                        parent_id: task.id,
+                        title: sub,
+                      });
+                      setSub("");
+                    })
+                  }
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+        {!task.parent_id && (
+          <section className="detail-section">
+            <h3>
+              <Repeat2 size={16} />
+              {t("Repeat")}
+            </h3>
+            {series && (
+              <>
+                <code>{series.rrule}</code>
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    void act(() => api("removeRecurrence", task.id))
+                  }
+                >
+                  {t("Remove repeat")}
+                </button>
+              </>
+            )}
+            <select value={repeat} onChange={(e) => setRepeat(e.target.value)}>
+              {[
+                ["", "Does not repeat"],
+                ["daily", "Daily"],
+                ["weekdays", "Weekdays"],
+                ["weekly", "Weekly"],
+                ["monthly", "Monthly"],
+                ["monthlyWeekday", "Monthly weekday"],
+              ].map(([v, l]) => (
+                <option value={v} key={v}>
+                  {t(l)}
+                </option>
+              ))}
+            </select>
+            {repeat && (
+              <>
+                {(repeat === "weekly" || repeat === "monthlyWeekday") && (
+                  <label>
+                    {t("Weekday")}
+                    <input
+                      value={byday}
+                      onChange={(e) => setByday(e.target.value.toUpperCase())}
+                      placeholder={t("Use commas, e.g. MO,WE,FR")}
+                    />
+                  </label>
+                )}
+                {repeat === "monthly" && (
+                  <label>
+                    {t("Month day")}
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={monthday}
+                      onChange={(e) => setMonthday(e.target.value)}
+                    />
+                  </label>
+                )}
+                {repeat === "monthlyWeekday" && (
+                  <label>
+                    {t("Week position")}
+                    <select
+                      value={position}
+                      onChange={(e) => setPosition(e.target.value)}
+                    >
+                      {["1", "2", "3", "4", "-1"].map((v) => (
+                        <option value={v} key={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <div className="form-grid">
+                  <label>
+                    {t("Until")}
+                    <input
+                      type="date"
+                      value={until}
+                      onChange={(e) => {
+                        setUntil(e.target.value);
+                        setCount("");
+                      }}
+                    />
+                  </label>
+                  <label>
+                    {t("Count")}
+                    <input
+                      type="number"
+                      min="1"
+                      max="10000"
+                      value={count}
+                      onChange={(e) => {
+                        setCount(e.target.value);
+                        setUntil("");
+                      }}
+                    />
+                  </label>
+                </div>
+                <button
+                  className="secondary full"
+                  onClick={() => void setRecurring()}
+                >
+                  {t("Set repeat")}
+                </button>
+              </>
+            )}
+            {series && (
+              <>
+                <h4>{t("Upcoming occurrences")}</h4>
+                {visibleOccurrences.slice(0, occurrenceLimit).map((o) => (
+                  <div className="occurrence" key={o.occurrence_key}>
+                    <input
+                      aria-label={t("Reschedule instance")}
+                      type="date"
+                      value={o.override_date || o.due_date}
+                      onChange={(e) =>
+                        void act(() =>
+                          api(
+                            "updateOccurrence",
+                            o.series_id,
+                            o.occurrence_key,
+                            { override_date: e.target.value },
+                          ),
+                        )
+                      }
+                    />
+                    <select
+                      aria-label="Occurrence status"
+                      value={o.status}
+                      onChange={(e) =>
+                        void act(() =>
+                          api(
+                            "updateOccurrence",
+                            o.series_id,
+                            o.occurrence_key,
+                            { status: e.target.value },
+                          ),
+                        )
+                      }
+                    >
+                      <option value="todo">{t("To do")}</option>
+                      <option value="done">{t("Done")}</option>
+                      <option value="skipped">{t("Skip")}</option>
+                    </select>
+                  </div>
+                ))}
+                {visibleOccurrences.length > occurrenceLimit && (
+                  <button
+                    className="secondary full"
+                    onClick={() => setOccurrenceLimit((n) => n + 24)}
+                  >
+                    {t("Show more occurrences")} (
+                    {visibleOccurrences.length - occurrenceLimit})
+                  </button>
+                )}
+              </>
+            )}
+          </section>
+        )}
+        <button className="delete-task" onClick={requestDelete}>
+          <Trash2 size={15} />
+          {t("Delete task")}
+        </button>
+      </div>
+    </aside>
+  );
 }
-function SettingsDialog({data,t,close,act}:{data:Snapshot;t:(s:string)=>string;close:()=>void;act:(f:()=>Promise<unknown>,m?:string)=>Promise<void>}){
- const [draft,setDraft]=useState<Settings>(data.settings)
- return <div className="overlay"><div className="dialog settings"><div className="dialog-header"><h2>{t('Settings')}</h2><button onClick={close}><X size={20}/></button></div><div className="form-grid"><label>{t('Language')}<select value={draft.language} onChange={e=>setDraft({...draft,language:e.target.value as Settings['language']})}><option value="system">{t('System')}</option><option value="zh">中文</option><option value="en">English</option></select></label><label>{t('Time zone')}<input placeholder={data.systemTimeZone} value={draft.timeZone} onChange={e=>setDraft({...draft,timeZone:e.target.value})}/></label></div><label>{t('Codex executable')}<input value={draft.codexPath} placeholder="PATH / /absolute/path/to/codex" onChange={e=>setDraft({...draft,codexPath:e.target.value})}/></label><button className="secondary" onClick={()=>void act(async()=>{await api('settings',draft);await api('probe')})}>{t('Detect Codex')}</button><div className="capabilities"><strong>Codex {data.capabilities?.version}</strong><p>{data.capabilities?.reason||data.capabilities?.isolation}</p><p>{t('Read-only sandbox is not full tool isolation.')}</p><p>{t('Install Codex and run codex login in a terminal, then detect again. Manual features remain available.')}</p></div><label className="checkbox-label"><input type="checkbox" checked={draft.alwaysConfirm} onChange={e=>setDraft({...draft,alwaysConfirm:e.target.checked})}/>{t('Always confirm AI changes')}</label><label className="checkbox-label"><input type="checkbox" checked={draft.closeToTray} onChange={e=>setDraft({...draft,closeToTray:e.target.checked})}/>{t('Close window to tray')}</label><div className="notice"><p>{t('AI sends selected task context to your Codex provider. Your subscription or API fees apply.')}</p><p>{t('Reminders work while Telldo is running, including in the tray. They are not guaranteed after Quit.')}</p><p>{t('Never synchronize the live SQLite database with a cloud drive. JSON import creates new IDs.')}</p></div><div className="data-actions">{[['backup','Backup database'],['export','Export JSON'],['import','Import JSON'],['openData','Open data folder']].map(([method,label])=><button className="secondary" key={method} onClick={()=>void act(()=>api(method),'Saved')}>{t(label)}</button>)}</div><div className="dialog-actions"><button onClick={close}>{t('Cancel')}</button><button className="primary" onClick={()=>void act(async()=>{await api('settings',draft);close()},'Saved')}>{t('Save settings')}</button></div></div></div>
+function SettingsDialog({
+  data,
+  t,
+  close,
+  act,
+}: {
+  data: Snapshot;
+  t: (s: string) => string;
+  close: () => void;
+  act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<Settings>(data.settings);
+  return (
+    <div className="overlay">
+      <div className="dialog settings">
+        <div className="dialog-header">
+          <h2>{t("Settings")}</h2>
+          <button onClick={close}>
+            <X size={20} />
+          </button>
+        </div>
+        <div className="form-grid">
+          <label>
+            {t("Language")}
+            <select
+              value={draft.language}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  language: e.target.value as Settings["language"],
+                })
+              }
+            >
+              <option value="system">{t("System")}</option>
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label>
+            {t("Time zone")}
+            <input
+              placeholder={data.systemTimeZone}
+              value={draft.timeZone}
+              onChange={(e) => setDraft({ ...draft, timeZone: e.target.value })}
+            />
+          </label>
+        </div>
+        <label>
+          {t("AI connection")}
+          <select
+            value={draft.aiTransport}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                aiTransport: e.target.value as Settings["aiTransport"],
+              })
+            }
+          >
+            <option value="local">{t("This Mac / Local")}</option>
+            <option value="ssh">{t("Remote computer over SSH")}</option>
+          </select>
+        </label>
+        {draft.aiTransport === "local" ? (
+          <label>
+            {t("Codex executable")}
+            <input
+              value={draft.codexPath}
+              placeholder="PATH / /absolute/path/to/codex"
+              onChange={(e) =>
+                setDraft({ ...draft, codexPath: e.target.value })
+              }
+            />
+          </label>
+        ) : (
+          <div className="ssh-settings">
+            <div className="form-grid">
+              <label>
+                {t("SSH host")}
+                <input
+                  value={draft.sshHost}
+                  placeholder="198.51.100.10"
+                  onChange={(e) =>
+                    setDraft({ ...draft, sshHost: e.target.value })
+                  }
+                />
+              </label>
+              <label>
+                {t("SSH port")}
+                <input
+                  type="number"
+                  min="1"
+                  max="65535"
+                  value={draft.sshPort}
+                  onChange={(e) =>
+                    setDraft({ ...draft, sshPort: Number(e.target.value) })
+                  }
+                />
+              </label>
+            </div>
+            <label>
+              {t("SSH user")}
+              <input
+                value={draft.sshUser}
+                placeholder="username"
+                onChange={(e) =>
+                  setDraft({ ...draft, sshUser: e.target.value })
+                }
+              />
+            </label>
+            <label>
+              {t("Remote Codex path")}
+              <input
+                value={draft.sshCodexPath}
+                placeholder="/home/username/.local/bin/codex"
+                onChange={(e) =>
+                  setDraft({ ...draft, sshCodexPath: e.target.value })
+                }
+              />
+            </label>
+            <label>
+              {t("Connection helper path")}
+              <input
+                value={draft.sshRunnerPath}
+                placeholder="/absolute/project/resources/ssh-codex-runner.py"
+                onChange={(e) =>
+                  setDraft({ ...draft, sshRunnerPath: e.target.value })
+                }
+              />
+            </label>
+            <label>
+              {t("Remote proxy (optional)")}
+              <input
+                value={draft.sshProxyUrl}
+                placeholder="http://proxy:3128"
+                onChange={(e) =>
+                  setDraft({ ...draft, sshProxyUrl: e.target.value })
+                }
+              />
+            </label>
+            <p className="notice">
+              {t(
+                "SSH uses your existing keys and known hosts. No password or token is stored in Telldo.",
+              )}
+            </p>
+          </div>
+        )}
+        <button
+          className="secondary"
+          onClick={() =>
+            void act(async () => {
+              await api("settings", draft);
+              await api("probe");
+            })
+          }
+        >
+          {t("Detect Codex")}
+        </button>
+        <div className="capabilities">
+          <strong>Codex {data.capabilities?.version}</strong>
+          <p>{data.capabilities?.reason || data.capabilities?.isolation}</p>
+          <p>{t("Read-only sandbox is not full tool isolation.")}</p>
+          <p>
+            {t(
+              "Install Codex and run codex login in a terminal, then detect again. Manual features remain available.",
+            )}
+          </p>
+        </div>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={draft.alwaysConfirm}
+            onChange={(e) =>
+              setDraft({ ...draft, alwaysConfirm: e.target.checked })
+            }
+          />
+          {t("Always confirm AI changes")}
+        </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={draft.closeToTray}
+            onChange={(e) =>
+              setDraft({ ...draft, closeToTray: e.target.checked })
+            }
+          />
+          {t("Close window to tray")}
+        </label>
+        <div className="notice">
+          <p>
+            {t(
+              "AI sends selected task context to your Codex provider. Your subscription or API fees apply.",
+            )}
+          </p>
+          <p>
+            {t(
+              "Reminders work while Telldo is running, including in the tray. They are not guaranteed after Quit.",
+            )}
+          </p>
+          <p>
+            {t(
+              "Never synchronize the live SQLite database with a cloud drive. JSON import creates new IDs.",
+            )}
+          </p>
+        </div>
+        <div className="data-actions">
+          {[
+            ["backup", "Backup database"],
+            ["export", "Export JSON"],
+            ["import", "Import JSON"],
+            ["openData", "Open data folder"],
+          ].map(([method, label]) => (
+            <button
+              className="secondary"
+              key={method}
+              onClick={() => void act(() => api(method), "Saved")}
+            >
+              {t(label)}
+            </button>
+          ))}
+        </div>
+        <div className="dialog-actions">
+          <button onClick={close}>{t("Cancel")}</button>
+          <button
+            className="primary"
+            onClick={() =>
+              void act(async () => {
+                await api("settings", draft);
+                close();
+              }, "Saved")
+            }
+          >
+            {t("Save settings")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
-function ProposalDialog({proposal,tasks,lists,t,close,act}:{proposal:Proposal;tasks:Task[];lists:Snapshot['lists'];t:(s:string)=>string;close:()=>void;act:(f:()=>Promise<unknown>,m?:string)=>Promise<void>}){
- const fields:Record<string,string>={title:t('Title'),notes:t('Notes'),list_id:t('List'),parent_id:t('Subtasks'),priority:t('Priority'),due_kind:t('Due date'),due_date:t('Due date'),due_at:t('Date & time'),time_zone:t('Time zone'),planned_date:t('Planned date'),reminder_at:t('Reminder'),tags:t('Tags'),status:t('To do')}
- const labels:Record<string,string>={create:'创建 / Create',update:'更新 / Update',complete:'完成 / Complete',uncomplete:'恢复 / Reopen',reschedule:'改期 / Reschedule',delete:'删除 / Delete',add_subtask:'添加子任务 / Add subtask',set_tags:'标签 / Tags'}
- return <div className="overlay"><div className="dialog proposal"><div className="dialog-header"><h2>{t('Review proposal')}</h2><button onClick={close}><X size={20}/></button></div><div className="pill">{proposal.status} · {proposal.risk}</div><h3>{proposal.summary}</h3><div className="proposal-items">{proposal.actions.map((a,i)=><div key={i}><strong>{labels[a.type]} · {tasks.find(task=>task.id===a.target_id)?.title||a.patch.title||a.target_id}</strong>{a.type==='delete'&&tasks.some(task=>task.parent_id===a.target_id)&&<p>{t('Subtasks')}: {tasks.filter(task=>task.parent_id===a.target_id).map(task=>task.title).join(', ')}</p>}<p>{Object.entries(a.patch).map(([key,value])=>`${fields[key]||key}: ${key==='list_id'?lists.find(l=>l.id===value)?.name||value:Array.isArray(value)?value.join(', '):value??'—'}`).join(' · ')}</p></div>)}</div><div className="dialog-actions"><button onClick={close}>{t('Back')}</button>{proposal.status==='pending'&&<><button onClick={()=>void act(async()=>{await api('rejectProposal',proposal.id);close()})}>{t('Reject')}</button><button className="primary" onClick={()=>void act(async()=>{await api('applyProposal',proposal.id);close()},'Applied')}>{t('Apply changes')}</button></>}{proposal.status==='applied'&&<button className="primary" onClick={()=>void act(async()=>{await api('undoProposal',proposal.id);close()},'Saved')}>{t('Undo')}</button>}</div></div></div>
+function ProposalDialog({
+  proposal,
+  tasks,
+  lists,
+  t,
+  close,
+  act,
+}: {
+  proposal: Proposal;
+  tasks: Task[];
+  lists: Snapshot["lists"];
+  t: (s: string) => string;
+  close: () => void;
+  act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
+}) {
+  const fields: Record<string, string> = {
+    title: t("Title"),
+    notes: t("Notes"),
+    list_id: t("List"),
+    parent_id: t("Subtasks"),
+    priority: t("Priority"),
+    due_kind: t("Due date"),
+    due_date: t("Due date"),
+    due_at: t("Date & time"),
+    time_zone: t("Time zone"),
+    planned_date: t("Planned date"),
+    reminder_at: t("Reminder"),
+    tags: t("Tags"),
+    status: t("To do"),
+  };
+  const labels: Record<string, string> = {
+    create: "创建 / Create",
+    update: "更新 / Update",
+    complete: "完成 / Complete",
+    uncomplete: "恢复 / Reopen",
+    reschedule: "改期 / Reschedule",
+    delete: "删除 / Delete",
+    add_subtask: "添加子任务 / Add subtask",
+    set_tags: "标签 / Tags",
+  };
+  return (
+    <div className="overlay">
+      <div className="dialog proposal">
+        <div className="dialog-header">
+          <h2>{t("Review proposal")}</h2>
+          <button onClick={close}>
+            <X size={20} />
+          </button>
+        </div>
+        <div className="pill">
+          {proposal.status} · {proposal.risk}
+        </div>
+        <h3>{proposal.summary}</h3>
+        <div className="proposal-items">
+          {proposal.actions.map((a, i) => (
+            <div key={i}>
+              <strong>
+                {labels[a.type]} ·{" "}
+                {tasks.find((task) => task.id === a.target_id)?.title ||
+                  a.patch.title ||
+                  a.target_id}
+              </strong>
+              {a.type === "delete" &&
+                tasks.some((task) => task.parent_id === a.target_id) && (
+                  <p>
+                    {t("Subtasks")}:{" "}
+                    {tasks
+                      .filter((task) => task.parent_id === a.target_id)
+                      .map((task) => task.title)
+                      .join(", ")}
+                  </p>
+                )}
+              <p>
+                {Object.entries(a.patch)
+                  .map(
+                    ([key, value]) =>
+                      `${fields[key] || key}: ${key === "list_id" ? lists.find((l) => l.id === value)?.name || value : Array.isArray(value) ? value.join(", ") : (value ?? "—")}`,
+                  )
+                  .join(" · ")}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="dialog-actions">
+          <button onClick={close}>{t("Back")}</button>
+          {proposal.status === "pending" && (
+            <>
+              <button
+                onClick={() =>
+                  void act(async () => {
+                    await api("rejectProposal", proposal.id);
+                    close();
+                  })
+                }
+              >
+                {t("Reject")}
+              </button>
+              <button
+                className="primary"
+                onClick={() =>
+                  void act(async () => {
+                    await api("applyProposal", proposal.id);
+                    close();
+                  }, "Applied")
+                }
+              >
+                {t("Apply changes")}
+              </button>
+            </>
+          )}
+          {proposal.status === "applied" && (
+            <button
+              className="primary"
+              onClick={() =>
+                void act(async () => {
+                  await api("undoProposal", proposal.id);
+                  close();
+                }, "Saved")
+              }
+            >
+              {t("Undo")}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }

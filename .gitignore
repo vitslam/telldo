@@ -8,3 +8,6 @@ coverage/
 artifacts/
 
 .tools/
+
+__pycache__/
+*.pyc
