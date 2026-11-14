@@ -1,97 +1,118 @@
-# Telldo
+<p align="center">
+  <img src="resources/icon.png" width="72" alt="Telldo icon">
+</p>
 
-**你说一句话，事情办到清单上。 / Say it. Get it on your list.**
+<h1 align="center">Telldo</h1>
+<p align="center"><strong>Say it. Plan it. Get it done.</strong></p>
+<p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
 
-Telldo 是 MIT 许可、免费、开源的个人待办桌面应用。Electron + React + TypeScript + SQLite，本地优先、单用户，中英双语默认跟随系统。首次使用有「工作」「生活」「随时再说」三个空清单，可改名或删除。
+Turn the things on your mind into a plan you can act on. **Telldo is an open-source, local-first desktop task manager** with natural-language capture, calendar planning, and optional AI powered by your own Codex.
 
-## 当前功能（0.2.0）
+**Your task database stays on your computer. Your workflow works without AI.**
 
-- 清单与任务 CRUD、一层子任务、标签、优先级、标题/备注/标签搜索。
-- 今天（过期未完成、今天截止、今天安排）、计划（选定月份的列表/月历）、随时（无日期且未安排）。可显示已完成任务。
-- 计划列表/月历共享月份和清单筛选；安排日优先显示主卡片，另在截止日显示同一任务的截止标记。日期格新增和拖入待安排任务仅设置安排日；重复改期只作用于本次。日期改动有版本检查、提醒预览及撤销，详见 [日历规则](docs/design/calendar-design.md)。
-- 中文自然语言日期：`明天下午 3 点`、`下周五`、`本月底`；新建时输入 `明天下午交周报` 会提取标题和明天15:00。模糊时段约定上午09:00、下午15:00、晚上20:00。日期解析使用设置时区或操作系统时区。
-- 日期任务仅保存本地日历日；带时间任务保存 UTC 瞬时和 IANA 时区。计划页的日期格和时刻使用当前设置时区；任务详情保留原任务时区。智能视图以当前设置时区划分今天。
-- 每天、每周多个星期几、工作日、每月几号、每月第几个星期几重复，支持次数或截止日。每月31日落到短月最后一天。实例保留原计划标识，可独立完成、跳过和改期。规则变更需先取消原重复再创建；不会隐式重写既有实例。详见 [日期与提醒规则](docs/scheduling.md)。
-- 每任务/实例一个提醒；运行、最小化、托盘后台时触发系统通知。关闭窗口默认留在托盘，选择「退出」后不保证提醒；下次启动仅汇总未处理的过期提醒一次。系统通知权限、休眠和操作系统策略仍影响显示。
-- 一致性 SQLite 备份与 JSON 导入导出；AI 提案、确认、事务应用、乐观锁、审计和撤销。
+[Get started](#get-started) · [How to use](#how-to-use) · [Optional AI](#connect-your-codex-optional) · [Documentation](#documentation)
 
-不包含周时间轴、时段/时长、日历订阅、习惯打卡、番茄钟、云同步、移动端、协作或对外 MCP 服务。
+![Telldo Today view with task lists, priorities, and an editable task detail panel](docs/images/telldo-today.png)
 
-## AI、隐私与费用
+*Real desktop screenshots with example tasks. Telldo supports English and Simplified Chinese.*
 
-Telldo 不收取软件费用，也没有自己的 AI 订阅层。AI 支持本机 Codex，或经 SSH 调用公司电脑上已登录的 Codex CLI；Codex 订阅、额度和 API 费用由用户承担。
+## Why Telldo?
 
-**云端推理会把用户输入、选定任务标题、日期以及少量必要上下文发送给模型提供方，AI 并非全本地。** 应用最多提供30个任务摘要和30个清单，不发送全库、数据库路径或凭证。复用 CLI 登录态，不读取、复制或导出 token、密钥、凭证文件。
+- **Capture at the speed of a thought.** Type a task with a date, or describe what you need in the AI input. Spend less time filling out forms.
+- **See the same tasks your way.** Switch between a list and a monthly calendar inside Planned. Keep the same tasks, filters, and details.
+- **Separate the plan from the deadline.** Decide when to work on something without moving its due date. Drag to reschedule, then undo a date change if needed.
+- **Keep your everyday essentials together.** Lists, subtasks, notes, tags, priorities, recurring tasks, reminders, and search.
+- **Keep control of your data and AI.** A local SQLite database, database backups, and JSON import/export. Connect your own Codex locally or over SSH; manual task management works without it.
 
-没有 Codex、未登录、网络失败或额度不足时，AI 入口不可用，全部手动功能仍可使用。本机模式在本机、SSH 模式在远端终端安装并运行 `codex login`；设置里可手动填写可执行文件的绝对路径，然后点击「检测 Codex」。优先查 PATH。GUI 启动时 PATH 可能与终端不同。
+Free software under the [MIT license](LICENSE). No Telldo account or Telldo AI subscription is required. Your Codex plan, usage limits, and provider charges still apply when you use AI.
 
-AI 不是聊天记录本：一句话 → 可校验提案 → 确认或直写 → Task Service 事务落库。低风险仅限单条顶层创建，默认可直写并撤销；其余更改先显示摘要与实际动作确认。设置可改为一律确认。版本冲突整批回滚；同一个成功应用的幂等键不能重复执行。撤销若遇到后续修改会拒绝覆盖。
+## A calendar built around your tasks
 
-Codex 使用 argv 数组和 stdin，在临时空工作目录运行，不使用 shell 命令拼接。JSONL 只作进度与工具检测；最终业务 JSON 从输出文件或严格降级的最终 agent message 解析。只读沙箱**不等于强制无 shell/MCP/网络**；不宣称无工具隔离。检测到任何工具调用时整次失败，不采用其结果、不写业务库。已验证的参数与未验证能力见 [Codex 能力说明](docs/codex-capabilities.md)。
+![Telldo monthly calendar showing planned tasks and separate deadline markers](docs/images/telldo-calendar.png)
 
-## 数据与备份
+A task's main card appears on its planned day, or its due day if it has no planned day. When the two dates differ, a small deadline marker keeps the due date visible. Both open the same task.
 
-唯一业务真相源是应用用户数据目录里的 `telldo.sqlite`：
+Click a day to add a task, drag an unscheduled task onto a date, or move an existing card. Repeating tasks can be moved one occurrence at a time. When a deadline has a reminder, choose whether that reminder follows the move or keeps its original time.
 
-- macOS：`~/Library/Application Support/Telldo/`
-- Linux：通常 `~/.config/Telldo/`
-- Windows：通常 `%APPDATA%/Telldo/`
+## Get started
 
-设置中「打开数据目录」可查看实际位置。**禁止把正在使用的数据库放进 iCloud Drive、Syncthing 或其他文件同步文件夹**；多端同时打开活库可能损坏数据。第一版不提供同步。可在设置中使用在线一致性备份，或 JSON 导出后同步导出文件。
+### Build the macOS app
 
-JSON 导入默认生成所有清单、任务、标签、系列的新 ID，保留内部父子和重复关系，避免覆盖现有数据。导入全事务执行，错误时全部回滚。备份/导入导出不会把 Codex 登录态包含进去。审计、通知去重与导入细节见 [数据模型](docs/data-model.md)。
+You need **Git, Node.js 22.12 or newer, and npm** on a Mac.
 
-## 开发与测试
-
-需要 Node.js22.12+、npm，以及桌面图形环境。依赖固定在 package-lock.json。
-
-```bash
+```sh
+git clone https://github.com/vitslam/telldo.git
+cd telldo
 npm ci
-npm run dev
-npm test
-npm run build
-npm run test:smoke
-npm run test:calendar
+npm run package:mac
 ```
 
-SQLite 使用 Electron 自带的 `node:sqlite` 同步接口（Electron45.3.2 内含 SQLite3.53.4），不依赖第三方原生绑定或本机编译器。测试使用 `ELECTRON_RUN_AS_NODE=1`，确保与桌面应用运行于同一 Node/SQLite 版本。
+Find `Telldo.app` inside the generated `release/` directory, move it to your Applications folder, and open it. For a ZIP package, run `npm run dist:mac` instead.
 
-`npm test` 覆盖手动 CRUD、三视图、时区、日期/时刻、月末/DST、实例幂等、提醒补漏、备份导入、提案版本/范围/事务/幂等/撤销及适配器取消/超时/登录/工具调用等。`npm run test:smoke` 使用 Playwright 启动真实 Electron，在临时数据库中执行无 Codex 的完整手动流程并生成 `artifacts/` 截图。`npm run test:calendar` 验证真实客户端的月历、改期、提醒选择和撤销。两套验收均不会使用用户活库。
+These development builds are not signed with an Apple Developer certificate or notarized. Platform-specific packaging notes are in the [macOS build guide](docs/macos-packaging.md).
 
-可选真实 Codex 合成数据测试（会使用自己的额度；不写业务库）：
+### Run from source
 
-```bash
-TELLDO_CODEX_PATH=/absolute/path/to/codex node scripts/codex-live-check.mjs
-```
+After cloning and installing dependencies:
 
-## Linux 开发与远端 Codex
-
-公开仓库：https://github.com/vitslam/telldo 。以下地址和路径均为示例，请替换为自己的环境。可用现有 Node.js22.12+；开发环境也可使用项目内 `.tools/` 的独立 Node，以免修改系统环境。
-
-```bash
-ssh -p 2222 developer@198.51.100.10
-cd /opt/telldo
-source scripts/env.sh
-# 仅需要公司代理时设置；不把代理作为全局系统配置
-export https_proxy=http://192.0.2.10:3128
-export http_proxy=http://192.0.2.10:3128
+```sh
 npm run dev
 ```
 
-远端是 Linux。Electron 是桌面应用，需要真实桌面会话；不是部署后可通过网页访问的服务。无桌面环境时使用项目内 Xvfb 执行验收，详见 [验收记录](docs/acceptance.md)。没有添加 Web 服务或云同步。Mac 客户端的 SQLite 数据留在 Mac，SSH 仅传输最小 AI 请求和提案；连接设置及远端助手安装见 [SSH Codex](docs/ssh-codex.md)。
+A desktop graphical session is required. Linux development and Electron tests are supported; Windows has not been verified. See the [current validation record](docs/calendar-acceptance.md) for tested scope. A terminal-only SSH session does not display the desktop app.
 
-## 打包
+## How to use
 
-```bash
-npm run package:mac   # 在 macOS 上构建 .app
-npm run dist:mac      # 在 macOS 上构建 zip
-npm run package:linux
+1. **Capture a task.** Use the add-task field. Try `Send the report tomorrow` or `明天下午3点交周报` (submit the weekly report tomorrow at 3 PM). You can also set dates explicitly in task details.
+2. **Choose your focus.** **Today** brings together overdue, due-today, and planned-today tasks. **Planned** shows a selected month as a list or calendar. **Anytime** holds tasks with neither a deadline nor a planned day.
+3. **Make a plan.** Open **Planned → Month view**. Adding a task on a date sets its planned day; it does not invent a deadline. Move a planned card without changing its due date.
+4. **Keep moving.** Add notes or subtasks, set a repeat rule or reminder, and check tasks off as you finish them.
+
+The interface follows your system language by default. Change language and time zone in **Settings**. Reminders require Telldo to be running, including in the tray; quitting the app stops reminder checks.
+
+## Connect your Codex (optional)
+
+1. Install Codex and sign in on the computer that will run it.
+2. In **Settings**, select **This Mac / Local** or **Remote computer over SSH**.
+3. Enter the connection details if needed, then choose **Detect Codex**.
+4. Use the AI input to turn a request into task changes. Edits are presented for review; a simple single-task addition may apply automatically. Enable **Always confirm AI changes** if you prefer to review every proposal.
+
+SSH runs Codex on the remote computer while the task database stays on your desktop. Follow the [SSH setup guide](docs/ssh-codex.md) for the helper, authentication, and connection options.
+
+**Local storage does not mean local AI inference.** Using AI sends your request and selected task context to your configured Codex provider, and through the remote computer when using SSH. Telldo reuses the CLI login and does not copy its credentials. See [AI behavior and limits](docs/codex-capabilities.md).
+
+## Your data
+
+Use **Settings → Backup database** or **Export JSON** to save a copy of your work. **Open data folder** shows the actual storage location; on macOS the default is `~/Library/Application Support/Telldo/`.
+
+Do not sync the live SQLite database through a cloud-drive folder. Share or back up exported files instead. JSON import creates new IDs and preserves task relationships without overwriting existing tasks. Details: [data and backup model](docs/data-model.md).
+
+## Development
+
+Built with **Electron · React · TypeScript · SQLite**. No external database service is needed.
+
+```sh
+npm run typecheck       # TypeScript checks
+npm test                # Service and adapter tests
+npm run test:smoke      # Desktop task workflow; requires a graphical session
+npm run test:calendar   # Desktop calendar workflow; requires a graphical session
 ```
 
-构建结果放在 `release/`。远端 ZIP 未做开发者签名和公证；正式分发需开发者签名和公证。0.2.0 Apple Silicon 安装副本已做本机 ad-hoc 签名，本次 Mac 实机验证交由使用者完成；远端自动与界面测试结果见 [日历验收](docs/calendar-acceptance.md)。Linux 上可用 `npm run package:mac:linux` 交叉组装两种架构的 macOS 应用；下载的 Electron 运行时按官方 SHA256 校验，SQLite 随目标运行时提供。构建脚本见 [跨平台打包](docs/macos-packaging.md)。跨平台架构已分层，但 Windows 未进行运行验收；不承诺跨系统后台唤醒。当前已实际验证的环境和产物见 [验收记录](docs/acceptance.md)。
+UI tests use temporary databases, not your everyday tasks. Linux headless setup and packaging instructions are documented below.
 
-## 代码结构
+## Documentation
 
-`src/main/` 持有 Task Service、SQLite、受控调度器、通知与 Codex 适配器；`src/preload/` 仅暴露白名单 IPC 桥；`src/renderer/` 为无 Node 权限的 React 界面；`src/shared/` 提供类型、日期规则与提案验证；`resources/` 提供提示词和结构化输出 JSON Schema。
+| Guide | Covers |
+| --- | --- |
+| [Dates and reminders](docs/scheduling.md) | Time zones, recurrence, monthly rules, and notification behavior |
+| [Calendar design](docs/design/calendar-design.md) | Shared list/calendar semantics and date changes |
+| [SSH setup](docs/ssh-codex.md) | Use Codex on another computer |
+| [AI behavior](docs/codex-capabilities.md) | Proposals, CLI capabilities, and isolation limits |
+| [Data and backups](docs/data-model.md) | SQLite, import/export, transactions, and undo |
+| [macOS packaging](docs/macos-packaging.md) | Local builds and Linux cross-packaging |
+| [0.2.0 validation](docs/calendar-acceptance.md) | Verified workflows and current platform limits |
+| [Original validation](docs/acceptance.md) | Earlier tests and Linux headless setup |
 
-MIT License，见 [LICENSE](LICENSE)。
+Have a bug report or an idea? [Open an issue](https://github.com/vitslam/telldo/issues). Include what you expected, what happened, and your platform.
+
+[MIT License](LICENSE) · Made for a little less on your mind.
