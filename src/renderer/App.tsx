@@ -53,6 +53,12 @@ const zh: Record<string, string> = {
     "SSH 使用已有密钥和已信任的主机记录，Telldo 不保存密码或 token。",
   "SSH connection details": "SSH 连接参数",
 
+  "Tasks are stored locally. AI context is sent to your model provider. Review AI changes before applying them.":
+    "任务保存在本地。AI 对话上下文会发送给模型提供方，更改内容由你确认后应用。",
+  General: "通用",
+  "Data management": "数据管理",
+  Close: "关闭",
+  "Create list": "创建清单",
   Appearance: "外观",
   "Color theme": "主题配色",
   "Black & white": "经典黑白",
@@ -184,6 +190,91 @@ const zh: Record<string, string> = {
 type Row = { task: Task; occurrence?: Occurrence; template?: boolean };
 const api = <T,>(method: string, ...args: unknown[]) =>
   window.telldo.invoke<T>(method, ...args);
+function Modal({
+  children,
+  className,
+  labelledBy,
+  close,
+}: {
+  children: ReactNode;
+  className: string;
+  labelledBy: string;
+  close: () => void;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const frame = requestAnimationFrame(() => {
+      if (!panel.current?.contains(document.activeElement)) {
+        (
+          panel.current?.querySelector(
+            "input, button, select, textarea",
+          ) as HTMLElement | null
+        )?.focus();
+      }
+    });
+    const keydown = (event: KeyboardEvent) => {
+      const node = panel.current;
+      if (!node || event.isComposing || event.defaultPrevented) return;
+      const overlays = document.querySelectorAll(".overlay");
+      if (overlays[overlays.length - 1] !== node.parentElement) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeRef.current();
+      }
+      if (event.key === "Tab") {
+        const items = Array.from(
+          node.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
+          ),
+        ).filter((el) => el.getClientRects().length > 0);
+        const first = items[0],
+          last = items[items.length - 1];
+        if (!first) {
+          event.preventDefault();
+          node.focus();
+        } else if (
+          event.shiftKey &&
+          (document.activeElement === first ||
+            !node.contains(document.activeElement))
+        ) {
+          event.preventDefault();
+          last.focus();
+        } else if (
+          !event.shiftKey &&
+          (document.activeElement === last ||
+            !node.contains(document.activeElement))
+        ) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", keydown);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
+  return (
+    <div className="overlay modal-overlay">
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
+        className={`dialog ${className}`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
 export default function App() {
   const [data, setData] = useState<Snapshot | null>(null),
     [view, setView] = useState("today"),
@@ -510,10 +601,6 @@ export default function App() {
           {t("New list")}
         </button>
         <div className="sidebar-bottom">
-          <div className="local-note">
-            <span className="local-dot" />
-            {t("Local first. Room to think.")}
-          </div>
           <button className="nav-item" onClick={() => setSettingsOpen(true)}>
             <SettingsIcon size={18} />
             {t("Settings")}
@@ -557,10 +644,6 @@ export default function App() {
             )}
             {!search && <kbd>⌘ K</kbd>}
           </label>
-          <div className="workspace-status">
-            <span className="local-dot" />
-            {isZh ? "本地工作空间" : "Your local workspace"}
-          </div>
         </header>
         <div className="content">
           <div className="view-heading">
@@ -849,19 +932,12 @@ export default function App() {
             className={`ai-composer ${busy ? "is-working" : ""}`}
             aria-label={isZh ? "告诉 Telldo" : "Tell Telldo"}
           >
-            <div className="composer-heading">
-              <div className="assistant-identity">
-                <span className="assistant-spark">
-                  <Sparkles size={19} />
-                </span>
-                <strong>
-                  {isZh ? "说出来，安排好。" : "Say it. Make it happen."}
-                </strong>
-                <span className="assistant-name">TELLDO AI</span>
-              </div>
-              <kbd>⌘ J</kbd>
-            </div>
             <div className="ai-bar">
+              <Sparkles
+                className="composer-icon"
+                size={19}
+                aria-hidden="true"
+              />
               <textarea
                 ref={speechInput}
                 aria-label="Tell Telldo"
@@ -870,8 +946,8 @@ export default function App() {
                 onChange={(e) => setSpeech(e.target.value)}
                 placeholder={
                   isZh
-                    ? "想到什么就写下来，剩下的交给 Telldo…"
-                    : "A task, a plan, a thought. Tell Telldo what’s on your mind…"
+                    ? "告诉 Telldo，你想做什么…"
+                    : "Tell Telldo what’s on your mind…"
                 }
                 disabled={busy}
                 onKeyDown={(e) => {
@@ -885,6 +961,9 @@ export default function App() {
                   }
                 }}
               />
+              <kbd className="composer-shortcut" title="⌘ J">
+                ⌘ J
+              </kbd>
               {busy ? (
                 <button
                   className="ai-cancel"
@@ -908,7 +987,6 @@ export default function App() {
                 className="assistant-examples"
                 aria-label={isZh ? "试试这样说" : "Try saying"}
               >
-                <span>{isZh ? "试试" : "Try"}</span>
                 {(isZh
                   ? ["明天下午3点交周报", "每周五整理本周笔记"]
                   : [
@@ -929,7 +1007,11 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <div className="ai-caption" aria-live="polite">
+              <div
+                className="ai-caption"
+                aria-live="polite"
+                hidden={!busy && !!data.capabilities?.available}
+              >
                 {busy ? (
                   <>
                     <LoaderCircle size={12} className="spin" />
@@ -947,22 +1029,10 @@ export default function App() {
                     {isZh ? "连接 Codex" : "Connect Codex"}
                     <ArrowUpRight size={12} />
                   </button>
-                ) : (
-                  <>
-                    <span className="local-dot" />
-                    <span>
-                      {isZh ? "AI 更改需你确认" : "You approve AI changes"}
-                    </span>
-                  </>
-                )}
+                ) : null}
               </div>
             </div>
           </section>
-          <div className="assistant-footnote">
-            {isZh
-              ? "你的任务，本地保存。AI 对话上下文会发送给模型提供方。"
-              : "Tasks stay on your device. AI context is sent to your model provider."}
-          </div>
         </div>
       </main>
       {task && !(view === "planned" && !search) && (
@@ -1001,44 +1071,71 @@ export default function App() {
         />
       )}
       {listDialog && (
-        <div className="overlay">
+        <Modal
+          className="list-dialog"
+          labelledBy="list-dialog-title"
+          close={() => setListDialog(null)}
+        >
           <form
-            className="dialog small"
+            className="list-dialog-form"
             onSubmit={(e) => {
               e.preventDefault();
               void act(async () => {
                 if (listDialog.id)
                   await api("updateList", listDialog.id, {
-                    name: listDialog.name,
+                    name: listDialog.name.trim(),
                   });
-                else await api("createList", listDialog.name, "#7180ea");
+                else await api("createList", listDialog.name.trim(), "#7180ea");
                 setListDialog(null);
               });
             }}
           >
-            <h2>{t(listDialog.id ? "Rename list" : "New list")}</h2>
-            <label>
-              {t("Name")}
-              <input
-                autoFocus
-                required
-                maxLength={100}
-                value={listDialog.name}
-                onChange={(e) =>
-                  setListDialog({ ...listDialog, name: e.target.value })
-                }
-              />
-            </label>
-            <div className="dialog-actions">
+            <div className="modal-heading">
+              <h2 id="list-dialog-title">
+                {t(listDialog.id ? "Rename list" : "New list")}
+              </h2>
+              <button
+                type="button"
+                className="modal-close"
+                aria-label={t("Close")}
+                onClick={() => setListDialog(null)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <label>
+                {t("Name")}
+                <input
+                  placeholder={
+                    isZh
+                      ? "例如：工作、旅行、阅读"
+                      : "e.g. Work, Travel, Reading"
+                  }
+                  autoFocus
+                  required
+                  maxLength={100}
+                  value={listDialog.name}
+                  onChange={(e) =>
+                    setListDialog({ ...listDialog, name: e.target.value })
+                  }
+                />
+              </label>
+            </div>
+            <div className="dialog-actions modal-footer">
               <button type="button" onClick={() => setListDialog(null)}>
                 {t("Cancel")}
               </button>
-              <button className="primary" type="submit">
-                {t("Save changes")}
+              <button
+                className="primary"
+                type="submit"
+                disabled={!listDialog.name.trim()}
+              >
+                {t(listDialog.id ? "Save changes" : "Create list")}
               </button>
             </div>
           </form>
-        </div>
+        </Modal>
       )}
       {proposal && (
         <ProposalDialog
@@ -1660,6 +1757,7 @@ function SettingsDialog({
   close: () => void;
   act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
 }) {
+  const [section, setSection] = useState("appearance");
   const [draft, setDraft] = useState<Settings>(data.settings);
   useEffect(() => {
     applyAppearance(draft);
@@ -1671,279 +1769,311 @@ function SettingsDialog({
     data.settings.appearance,
   ]);
   return (
-    <div className="overlay">
-      <div className="dialog settings">
-        <div className="dialog-header">
-          <h2>{t("Settings")}</h2>
-          <button onClick={close}>
-            <X size={20} />
-          </button>
-        </div>
-        <section className="appearance-settings">
-          <h3>{t("Appearance")}</h3>
-          <div
-            className="theme-options"
-            role="group"
-            aria-label={t("Color theme")}
-          >
-            {(
-              [
-                ["mono", "Black & white"],
-                ["forest", "Forest"],
-                ["ocean", "Ocean"],
-                ["plum", "Plum"],
-              ] as const
-            ).map(([theme, label]) => (
-              <button
-                key={theme}
-                className="theme-option"
-                aria-pressed={draft.theme === theme}
-                onClick={() => setDraft({ ...draft, theme })}
-              >
-                <span className={`theme-swatch swatch-${theme}`} />
-                <span>{t(label)}</span>
-                {draft.theme === theme && <Check size={14} />}
-              </button>
-            ))}
-          </div>
-          <div
-            className="appearance-modes"
-            role="group"
-            aria-label={t("Display mode")}
-          >
-            {(
-              [
-                ["light", "Light"],
-                ["dark", "Dark"],
-                ["system", "Follow system"],
-              ] as const
-            ).map(([appearance, label]) => (
-              <button
-                key={appearance}
-                aria-pressed={draft.appearance === appearance}
-                onClick={() => setDraft({ ...draft, appearance })}
-              >
-                {t(label)}
-              </button>
-            ))}
-          </div>
-          <p>{t("Preview instantly. Save to keep your choice.")}</p>
-        </section>
-        <div className="form-grid">
-          <label>
-            {t("Language")}
-            <select
-              value={draft.language}
-              onChange={(e) =>
-                setDraft({
-                  ...draft,
-                  language: e.target.value as Settings["language"],
-                })
-              }
+    <Modal className="settings-modal" labelledBy="settings-title" close={close}>
+      <div className="modal-heading">
+        <h2 id="settings-title">{t("Settings")}</h2>
+        <button className="modal-close" aria-label={t("Close")} onClick={close}>
+          <X size={18} />
+        </button>
+      </div>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label={t("Settings")}>
+          {(
+            [
+              ["appearance", "Appearance", Sun],
+              ["general", "General", SettingsIcon],
+              ["ai", "AI connection", Sparkles],
+              ["data", "Data management", Layers],
+            ] as const
+          ).map(([id, label, Icon]) => (
+            <button
+              key={id}
+              aria-pressed={section === id}
+              onClick={() => setSection(id)}
             >
-              <option value="system">{t("System")}</option>
-              <option value="zh">中文</option>
-              <option value="en">English</option>
-            </select>
-          </label>
-          <label>
-            {t("Time zone")}
-            <input
-              placeholder={data.systemTimeZone}
-              value={draft.timeZone}
-              onChange={(e) => setDraft({ ...draft, timeZone: e.target.value })}
-            />
-          </label>
-        </div>
-        <label>
-          {t("AI connection")}
-          <select
-            value={draft.aiTransport}
-            onChange={(e) =>
-              setDraft({
-                ...draft,
-                aiTransport: e.target.value as Settings["aiTransport"],
-              })
-            }
-          >
-            <option value="local">{t("This Mac / Local")}</option>
-            <option value="ssh">{t("Remote computer over SSH")}</option>
-          </select>
-        </label>
-        {draft.aiTransport === "local" ? (
-          <label>
-            {t("Codex executable")}
-            <input
-              value={draft.codexPath}
-              placeholder="PATH / /absolute/path/to/codex"
-              onChange={(e) =>
-                setDraft({ ...draft, codexPath: e.target.value })
-              }
-            />
-          </label>
-        ) : (
-          <div className="ssh-settings">
+              <Icon size={17} />
+              <span>{t(label)}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="settings-pages">
+          <div className="settings-page" hidden={section !== "appearance"}>
+            <section className="appearance-settings">
+              <h3>{t("Appearance")}</h3>
+              <div
+                className="theme-options"
+                role="group"
+                aria-label={t("Color theme")}
+              >
+                {(
+                  [
+                    ["mono", "Black & white"],
+                    ["forest", "Forest"],
+                    ["ocean", "Ocean"],
+                    ["plum", "Plum"],
+                  ] as const
+                ).map(([theme, label]) => (
+                  <button
+                    key={theme}
+                    className="theme-option"
+                    aria-pressed={draft.theme === theme}
+                    onClick={() => setDraft({ ...draft, theme })}
+                  >
+                    <span className={`theme-swatch swatch-${theme}`} />
+                    <span>{t(label)}</span>
+                    {draft.theme === theme && <Check size={14} />}
+                  </button>
+                ))}
+              </div>
+              <div
+                className="appearance-modes"
+                role="group"
+                aria-label={t("Display mode")}
+              >
+                {(
+                  [
+                    ["light", "Light"],
+                    ["dark", "Dark"],
+                    ["system", "Follow system"],
+                  ] as const
+                ).map(([appearance, label]) => (
+                  <button
+                    key={appearance}
+                    aria-pressed={draft.appearance === appearance}
+                    onClick={() => setDraft({ ...draft, appearance })}
+                  >
+                    {t(label)}
+                  </button>
+                ))}
+              </div>
+              <p>{t("Preview instantly. Save to keep your choice.")}</p>
+            </section>
+          </div>
+          <div className="settings-page" hidden={section !== "general"}>
+            <h3>{t("General")}</h3>
             <div className="form-grid">
               <label>
-                {t("SSH host")}
-                <input
-                  value={draft.sshHost}
-                  placeholder="198.51.100.10"
+                {t("Language")}
+                <select
+                  value={draft.language}
                   onChange={(e) =>
-                    setDraft({ ...draft, sshHost: e.target.value })
+                    setDraft({
+                      ...draft,
+                      language: e.target.value as Settings["language"],
+                    })
                   }
-                />
+                >
+                  <option value="system">{t("System")}</option>
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                </select>
               </label>
               <label>
-                {t("SSH port")}
+                {t("Time zone")}
                 <input
-                  type="number"
-                  min="1"
-                  max="65535"
-                  value={draft.sshPort}
+                  placeholder={data.systemTimeZone}
+                  value={draft.timeZone}
                   onChange={(e) =>
-                    setDraft({ ...draft, sshPort: Number(e.target.value) })
+                    setDraft({ ...draft, timeZone: e.target.value })
                   }
                 />
               </label>
             </div>
-            <label>
-              {t("SSH user")}
+            <label className="checkbox-label">
               <input
-                value={draft.sshUser}
-                placeholder="username"
+                type="checkbox"
+                checked={draft.closeToTray}
                 onChange={(e) =>
-                  setDraft({ ...draft, sshUser: e.target.value })
+                  setDraft({ ...draft, closeToTray: e.target.checked })
                 }
               />
+              {t("Close window to tray")}
             </label>
-            <label>
-              {t("Remote Codex path")}
-              <input
-                value={draft.sshCodexPath}
-                placeholder="/home/username/.local/bin/codex"
-                onChange={(e) =>
-                  setDraft({ ...draft, sshCodexPath: e.target.value })
-                }
-              />
-            </label>
-            <label>
-              {t("Connection helper path")}
-              <input
-                value={draft.sshRunnerPath}
-                placeholder="/absolute/project/resources/ssh-codex-runner.py"
-                onChange={(e) =>
-                  setDraft({ ...draft, sshRunnerPath: e.target.value })
-                }
-              />
-            </label>
-            <label>
-              {t("Remote proxy (optional)")}
-              <input
-                value={draft.sshProxyUrl}
-                placeholder="http://proxy:3128"
-                onChange={(e) =>
-                  setDraft({ ...draft, sshProxyUrl: e.target.value })
-                }
-              />
-            </label>
-            <p className="notice">
+            <p className="settings-help">
               {t(
-                "SSH uses your existing keys and known hosts. No password or token is stored in Telldo.",
+                "Reminders work while Telldo is running, including in the tray. They are not guaranteed after Quit.",
               )}
             </p>
           </div>
-        )}
+          <div className="settings-page" hidden={section !== "ai"}>
+            <h3>{t("AI connection")}</h3>
+            <label>
+              {t("AI connection")}
+              <select
+                value={draft.aiTransport}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    aiTransport: e.target.value as Settings["aiTransport"],
+                  })
+                }
+              >
+                <option value="local">{t("This Mac / Local")}</option>
+                <option value="ssh">{t("Remote computer over SSH")}</option>
+              </select>
+            </label>
+            <p className="settings-ai-note">
+              {t(
+                "Tasks are stored locally. AI context is sent to your model provider. Review AI changes before applying them.",
+              )}
+            </p>
+            {draft.aiTransport === "local" ? (
+              <label>
+                {t("Codex executable")}
+                <input
+                  value={draft.codexPath}
+                  placeholder="PATH / /absolute/path/to/codex"
+                  onChange={(e) =>
+                    setDraft({ ...draft, codexPath: e.target.value })
+                  }
+                />
+              </label>
+            ) : (
+              <div className="ssh-settings">
+                <div className="form-grid">
+                  <label>
+                    {t("SSH host")}
+                    <input
+                      value={draft.sshHost}
+                      placeholder="198.51.100.10"
+                      onChange={(e) =>
+                        setDraft({ ...draft, sshHost: e.target.value })
+                      }
+                    />
+                  </label>
+                  <label>
+                    {t("SSH port")}
+                    <input
+                      type="number"
+                      min="1"
+                      max="65535"
+                      value={draft.sshPort}
+                      onChange={(e) =>
+                        setDraft({ ...draft, sshPort: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                </div>
+                <label>
+                  {t("SSH user")}
+                  <input
+                    value={draft.sshUser}
+                    placeholder="username"
+                    onChange={(e) =>
+                      setDraft({ ...draft, sshUser: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  {t("Remote Codex path")}
+                  <input
+                    value={draft.sshCodexPath}
+                    placeholder="/home/username/.local/bin/codex"
+                    onChange={(e) =>
+                      setDraft({ ...draft, sshCodexPath: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  {t("Connection helper path")}
+                  <input
+                    value={draft.sshRunnerPath}
+                    placeholder="/absolute/project/resources/ssh-codex-runner.py"
+                    onChange={(e) =>
+                      setDraft({ ...draft, sshRunnerPath: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  {t("Remote proxy (optional)")}
+                  <input
+                    value={draft.sshProxyUrl}
+                    placeholder="http://proxy:3128"
+                    onChange={(e) =>
+                      setDraft({ ...draft, sshProxyUrl: e.target.value })
+                    }
+                  />
+                </label>
+                <p className="notice">
+                  {t(
+                    "SSH uses your existing keys and known hosts. No password or token is stored in Telldo.",
+                  )}
+                </p>
+              </div>
+            )}
+            <button
+              className="secondary"
+              onClick={() =>
+                void act(async () => {
+                  await api("settings", draft);
+                  await api("probe");
+                })
+              }
+            >
+              {t("Detect Codex")}
+            </button>
+            <div className="capabilities">
+              <strong>Codex {data.capabilities?.version}</strong>
+              <p>{data.capabilities?.reason || data.capabilities?.isolation}</p>
+              <p>{t("Read-only sandbox is not full tool isolation.")}</p>
+              <p>
+                {t(
+                  "Install Codex and run codex login in a terminal, then detect again. Manual features remain available.",
+                )}
+              </p>
+            </div>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={draft.alwaysConfirm}
+                onChange={(e) =>
+                  setDraft({ ...draft, alwaysConfirm: e.target.checked })
+                }
+              />
+              {t("Always confirm AI changes")}
+            </label>
+          </div>
+          <div className="settings-page" hidden={section !== "data"}>
+            <h3>{t("Data management")}</h3>
+            <div className="data-actions">
+              {[
+                ["backup", "Backup database"],
+                ["export", "Export JSON"],
+                ["import", "Import JSON"],
+                ["openData", "Open data folder"],
+              ].map(([method, label]) => (
+                <button
+                  className="secondary"
+                  key={method}
+                  onClick={() => void act(() => api(method), "Saved")}
+                >
+                  {t(label)}
+                </button>
+              ))}
+            </div>
+            <p className="settings-help">
+              {t(
+                "Never synchronize the live SQLite database with a cloud drive. JSON import creates new IDs.",
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="dialog-actions modal-footer">
+        <button onClick={close}>{t("Cancel")}</button>
         <button
-          className="secondary"
+          className="primary"
           onClick={() =>
             void act(async () => {
               await api("settings", draft);
-              await api("probe");
-            })
+              close();
+            }, "Saved")
           }
         >
-          {t("Detect Codex")}
+          {t("Save settings")}
         </button>
-        <div className="capabilities">
-          <strong>Codex {data.capabilities?.version}</strong>
-          <p>{data.capabilities?.reason || data.capabilities?.isolation}</p>
-          <p>{t("Read-only sandbox is not full tool isolation.")}</p>
-          <p>
-            {t(
-              "Install Codex and run codex login in a terminal, then detect again. Manual features remain available.",
-            )}
-          </p>
-        </div>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={draft.alwaysConfirm}
-            onChange={(e) =>
-              setDraft({ ...draft, alwaysConfirm: e.target.checked })
-            }
-          />
-          {t("Always confirm AI changes")}
-        </label>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={draft.closeToTray}
-            onChange={(e) =>
-              setDraft({ ...draft, closeToTray: e.target.checked })
-            }
-          />
-          {t("Close window to tray")}
-        </label>
-        <div className="notice">
-          <p>
-            {t(
-              "AI sends selected task context to your Codex provider. Your subscription or API fees apply.",
-            )}
-          </p>
-          <p>
-            {t(
-              "Reminders work while Telldo is running, including in the tray. They are not guaranteed after Quit.",
-            )}
-          </p>
-          <p>
-            {t(
-              "Never synchronize the live SQLite database with a cloud drive. JSON import creates new IDs.",
-            )}
-          </p>
-        </div>
-        <div className="data-actions">
-          {[
-            ["backup", "Backup database"],
-            ["export", "Export JSON"],
-            ["import", "Import JSON"],
-            ["openData", "Open data folder"],
-          ].map(([method, label]) => (
-            <button
-              className="secondary"
-              key={method}
-              onClick={() => void act(() => api(method), "Saved")}
-            >
-              {t(label)}
-            </button>
-          ))}
-        </div>
-        <div className="dialog-actions">
-          <button onClick={close}>{t("Cancel")}</button>
-          <button
-            className="primary"
-            onClick={() =>
-              void act(async () => {
-                await api("settings", draft);
-                close();
-              }, "Saved")
-            }
-          >
-            {t("Save settings")}
-          </button>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 function ProposalDialog({

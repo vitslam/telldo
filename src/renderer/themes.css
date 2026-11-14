@@ -520,3 +520,413 @@ label {
   background: var(--subtle);
   border-color: var(--border);
 }
+
+/* Quiet task rows and a single, always-visible AI input surface. */
+.task-list:not(.calendar-list):has(.task-row) {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.task-list:not(.calendar-list) .task-row {
+  min-height: 64px;
+  margin: 0;
+  padding: 14px 5px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.task-list:not(.calendar-list) .task-row:last-child {
+  border-bottom: 0;
+}
+.task-list:not(.calendar-list) .task-row:hover {
+  background: var(--subtle);
+  box-shadow: none;
+}
+.task-list:not(.calendar-list) .task-row.selected {
+  background: var(--tint);
+  box-shadow: none;
+}
+.task-list:not(.calendar-list) .task-title {
+  font-size: 14px;
+}
+.task-list:not(.calendar-list) .check-button {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+}
+.task-list:not(.calendar-list) .task-date {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.task-meta:empty {
+  display: none;
+}
+.assistant-dock {
+  padding-bottom: 24px;
+}
+.ai-composer {
+  padding: 14px 18px 10px;
+  border-radius: 14px;
+  box-shadow: 0 4px 18px var(--shadow);
+}
+.ai-bar {
+  gap: 12px;
+  margin: 0;
+}
+.composer-icon {
+  flex-shrink: 0;
+  color: var(--brand);
+}
+.ai-bar textarea {
+  min-height: 44px;
+  padding: 10px 0;
+  font-size: 15px;
+}
+.composer-shortcut {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--faint);
+}
+.ai-submit {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  box-shadow: none;
+}
+.assistant-bottom {
+  padding: 7px 0 0 31px;
+  min-height: 24px;
+}
+.assistant-examples {
+  gap: 14px;
+}
+.assistant-examples button {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font-size: 11px;
+  border-radius: 0;
+}
+.assistant-examples button:hover {
+  background: transparent;
+  color: var(--brand);
+}
+.assistant-examples button svg {
+  display: none;
+}
+.settings-ai-note {
+  font-size: 12px;
+  color: var(--secondary);
+  line-height: 1.7;
+}
+@media (max-width: 1100px) {
+  .app-shell > .detail {
+    bottom: 146px;
+  }
+}
+@media (max-height: 800px) {
+  .assistant-dock {
+    padding-bottom: 16px;
+  }
+}
+
+/* Dialogs share a quiet frame; navigation, content and actions stay distinct. */
+.modal-overlay {
+  padding: 32px;
+  background: #00000045;
+  backdrop-filter: blur(7px);
+}
+.dialog.settings-modal,
+.dialog.list-dialog {
+  padding: 0;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--panel);
+  box-shadow: 0 24px 80px #00000030;
+  outline: none;
+}
+.modal-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 23px 28px;
+  gap: 16px;
+}
+.modal-heading h2 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+.modal-close {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--faint);
+  border-radius: 7px;
+}
+.modal-close:hover {
+  color: var(--text);
+  background: var(--subtle);
+}
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  gap: 10px;
+  margin: 0;
+  padding: 17px 28px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.modal-footer > button,
+.modal-footer > button:not(.primary) {
+  min-width: 86px;
+  min-height: 36px;
+  padding: 8px 15px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.modal-footer > button:not(.primary) {
+  color: var(--secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.modal-footer > button:not(.primary):hover {
+  background: var(--subtle);
+}
+.dialog.list-dialog {
+  width: 430px;
+  max-width: calc(100vw - 48px);
+}
+.list-dialog-form {
+  display: flex;
+  flex-direction: column;
+}
+.list-dialog .modal-heading {
+  padding-bottom: 10px;
+}
+.modal-body {
+  padding: 18px 28px 30px;
+}
+.modal-body label {
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.modal-body input {
+  margin-top: 10px;
+  height: 46px;
+  padding: 11px 13px;
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+  font-size: 15px;
+  border-radius: 9px;
+}
+.dialog.settings-modal {
+  width: 760px;
+  max-width: calc(100vw - 64px);
+  height: min(620px, calc(100vh - 64px));
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+}
+.settings-modal > .modal-heading {
+  border-bottom: 1px solid var(--border);
+  padding-top: 21px;
+  padding-bottom: 21px;
+}
+.settings-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 22px 12px;
+  background: var(--page);
+  border-right: 1px solid var(--border);
+}
+.settings-nav button {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 39px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.settings-nav button svg {
+  flex-shrink: 0;
+  stroke-width: 1.6;
+}
+.settings-nav button[aria-pressed="true"] {
+  background: var(--tint);
+  color: var(--brand);
+  font-weight: 550;
+}
+.settings-pages {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 28px 30px;
+}
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.settings-page h3 {
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 550;
+  letter-spacing: -0.3px;
+  margin: 0 0 2px;
+}
+.settings-page label {
+  font-size: 12px;
+  color: var(--secondary);
+  font-weight: 500;
+}
+.settings-page input,
+.settings-page select {
+  min-height: 38px;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--border);
+}
+.settings-page .form-grid {
+  gap: 18px;
+}
+.settings-page .theme-options {
+  margin-top: 22px;
+  gap: 10px;
+}
+.settings-page .theme-option {
+  border: 1px solid var(--border);
+  padding: 9px;
+  gap: 10px;
+  border-radius: 10px;
+}
+.settings-page .theme-option[aria-pressed="true"] {
+  border-color: var(--brand);
+  background: var(--tint);
+}
+.settings-page .theme-swatch {
+  height: 60px;
+  border-radius: 6px;
+}
+.settings-page .appearance-modes {
+  margin-top: 26px;
+  padding: 4px;
+  border: 1px solid var(--border);
+}
+.settings-page .appearance-modes button {
+  min-height: 35px;
+}
+.settings-page .appearance-settings > p {
+  margin-top: 14px;
+  line-height: 1.6;
+}
+.settings-page .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+.settings-page .checkbox-label input {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--brand);
+}
+.settings-page .secondary {
+  align-self: flex-start;
+  min-height: 36px;
+}
+.settings-help,
+.settings-page .settings-ai-note {
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--faint);
+  margin: 0;
+}
+.settings-page .capabilities {
+  padding: 14px 16px;
+  border-radius: 9px;
+  background: var(--subtle);
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.settings-page .capabilities p {
+  margin-top: 6px;
+}
+.settings-page .notice {
+  margin: 0;
+  padding: 12px;
+  font-size: 11px;
+  border-radius: 8px;
+}
+.settings-page .data-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.settings-page .data-actions button {
+  min-height: 48px;
+  width: 100%;
+  justify-content: flex-start;
+  padding: 13px 15px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.settings-page .data-actions button:hover {
+  background: var(--subtle);
+}
+@media (max-width: 640px) {
+  .modal-overlay {
+    padding: 16px;
+  }
+  .dialog.settings-modal {
+    max-width: calc(100vw - 32px);
+  }
+  .settings-layout {
+    grid-template-columns: 130px minmax(0, 1fr);
+  }
+  .settings-pages {
+    padding: 22px 18px;
+  }
+  .settings-nav {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .settings-page .theme-options {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
