@@ -179,6 +179,7 @@ export default function App() {
     [selected, setSelected] = useState<string | null>(null),
     [newTask, setNewTask] = useState(""),
     [speech, setSpeech] = useState(""),
+    [composerOpen, setComposerOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [progress, setProgress] = useState(""),
     [error, setError] = useState(""),
@@ -200,6 +201,34 @@ export default function App() {
   const rangeRef = useRef<
     { start: string; end: string; zone: string } | undefined
   >(undefined);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const speechInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (document.querySelector(".overlay")) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInput.current?.focus();
+        searchInput.current?.select();
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        setComposerOpen((open) => !open);
+      }
+      if (
+        event.key === "Escape" &&
+        document.activeElement === searchInput.current
+      ) {
+        setSearch("");
+        searchInput.current?.blur();
+      }
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, []);
+  useEffect(() => {
+    if (composerOpen) speechInput.current?.focus();
+  }, [composerOpen]);
   const loadGeneration = useRef(0);
   const initializedPlanMonth = useRef(false);
   const reload = async () => {
@@ -348,15 +377,38 @@ export default function App() {
     setBusy(false);
   }
   const dateLabel = (item: Task) => {
-    if (item.due_kind === "datetime" && item.due_at)
-      return new Intl.DateTimeFormat(isZh ? "zh-CN" : "en", {
-        timeZone: item.time_zone || zone,
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      }).format(new Date(item.due_at));
-    return item.due_date || item.planned_date || "";
+    const date =
+      item.due_at && item.due_kind === "datetime"
+        ? DateTime.fromISO(item.due_at).setZone(item.time_zone || zone)
+        : DateTime.fromISO(item.due_date || item.planned_date || "", { zone });
+    if (!date.isValid) return "";
+    const day = date.toISODate();
+    const today = DateTime.now().setZone(zone);
+    const label =
+      day === today.toISODate()
+        ? t("Today")
+        : day === today.plus({ days: 1 }).toISODate()
+          ? isZh
+            ? "明天"
+            : "Tomorrow"
+          : date
+              .setLocale(isZh ? "zh-CN" : "en")
+              .toFormat(
+                date.year === today.year
+                  ? isZh
+                    ? "M月d日"
+                    : "MMM d"
+                  : isZh
+                    ? "yyyy年M月d日"
+                    : "MMM d, yyyy",
+              );
+    const time =
+      item.due_kind === "datetime" ? ` ${date.toFormat("HH:mm")}` : "";
+    return item.due_kind !== "none"
+      ? isZh
+        ? `${label}${time} 截止`
+        : `Due ${label}${time}`
+      : label;
   };
   if (!data)
     return (
@@ -373,17 +425,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">t.</div>
-          <span>
-            Telldo<span className="beta">BETA</span>
-          </span>
-        </div>
-        <div className="workspace">
-          <div className="avatar">{isZh ? "我" : "M"}</div>
-          <div>
-            <strong>{isZh ? "我的空间" : "My workspace"}</strong>
-            <small>{isZh ? "只属于你的日常" : "A space of your own"}</small>
-          </div>
-          <span className="local-dot" />
+          <span>Telldo</span>
         </div>
         <nav>
           {[
@@ -488,16 +530,33 @@ export default function App() {
           <label className="search">
             <Search size={17} />
             <input
+              ref={searchInput}
+              aria-label={t("Search tasks, notes, tags…")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t("Search tasks, notes, tags…")}
             />
             {search && (
-              <button onClick={() => setSearch("")}>
+              <button
+                aria-label={isZh ? "清除搜索" : "Clear search"}
+                onClick={() => setSearch("")}
+              >
                 <X size={14} />
               </button>
             )}
+            {!search && <kbd>⌘ K</kbd>}
           </label>
+          <button
+            className={`ask-toggle ${composerOpen ? "active" : ""}`}
+            aria-expanded={composerOpen}
+            aria-controls="ai-composer"
+            title={isZh ? "与 Telldo 对话 · ⌘ J" : "Ask Telldo · ⌘ J"}
+            onClick={() => setComposerOpen(!composerOpen)}
+          >
+            <Sparkles size={16} />
+            <span>{isZh ? "告诉 Telldo" : "Ask Telldo"}</span>
+            <kbd>⌘ J</kbd>
+          </button>
         </header>
         <div className="content">
           <div className="view-heading">
@@ -570,61 +629,80 @@ export default function App() {
               )}
             </p>
           </div>
-          <section
-            className={`ai-bar ${!data.capabilities?.available ? "unavailable" : ""}`}
+          <div
+            id="ai-composer"
+            className="ai-composer"
+            hidden={!composerOpen && !busy}
           >
-            <Sparkles size={21} />
-            <input
-              aria-label="Tell Telldo"
-              value={speech}
-              onChange={(e) => setSpeech(e.target.value)}
-              placeholder={t("Tell Telldo what’s on your mind…")}
-              disabled={!data.capabilities?.available || busy}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void ask();
-              }}
-            />
-            {busy ? (
-              <button onClick={() => void act(() => api("cancelAI"))}>
-                {t("Cancel")}
-              </button>
-            ) : (
+            <div className="composer-heading">
+              <span>
+                {isZh ? "把想法交给 Telldo" : "Make room for your next idea"}
+              </span>
               <button
-                className="ai-submit"
-                aria-label="Send to Codex"
-                disabled={!data.capabilities?.available || !speech.trim()}
-                onClick={() => void ask()}
+                aria-label={isZh ? "收起 AI 输入" : "Collapse AI composer"}
+                onClick={() => setComposerOpen(false)}
+                disabled={busy}
               >
-                <ArrowRight size={18} />
+                <X size={16} />
               </button>
-            )}
-          </section>
-          <div className="ai-caption">
-            {busy ? (
-              <>
-                <LoaderCircle size={12} className="spin" />
-                {t("Working…")} {progress.slice(0, 100)}
-              </>
-            ) : !data.capabilities?.available ? (
-              <>
-                <span>{data.capabilities?.reason || "Checking Codex…"}</span>
-                <button onClick={() => setSettingsOpen(true)}>
-                  {t("Settings")}
-                  <ArrowUpRight size={12} />
+            </div>
+            <section
+              className={`ai-bar ${!data.capabilities?.available ? "unavailable" : ""}`}
+            >
+              <Sparkles size={21} />
+              <input
+                ref={speechInput}
+                aria-label="Tell Telldo"
+                value={speech}
+                onChange={(e) => setSpeech(e.target.value)}
+                placeholder={t("Tell Telldo what’s on your mind…")}
+                disabled={!data.capabilities?.available || busy}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void ask();
+                }}
+              />
+              {busy ? (
+                <button onClick={() => void act(() => api("cancelAI"))}>
+                  {t("Cancel")}
                 </button>
-              </>
-            ) : (
-              <>
-                <span className="local-dot" />
-                Codex ·{" "}
-                {isZh ? "一句话，安排妥当" : "A few words. A clearer day."}
-                <span className="privacy-hint">
-                  {isZh
-                    ? "上下文将发送给模型提供方"
-                    : "Context is sent to your model provider"}
-                </span>
-              </>
-            )}
+              ) : (
+                <button
+                  className="ai-submit"
+                  aria-label="Send to Codex"
+                  disabled={!data.capabilities?.available || !speech.trim()}
+                  onClick={() => void ask()}
+                >
+                  <ArrowRight size={18} />
+                </button>
+              )}
+            </section>
+            <div className="ai-caption">
+              {busy ? (
+                <>
+                  <LoaderCircle size={12} className="spin" />
+                  {t("Working…")} {progress.slice(0, 100)}
+                </>
+              ) : !data.capabilities?.available ? (
+                <>
+                  <span>{data.capabilities?.reason || "Checking Codex…"}</span>
+                  <button onClick={() => setSettingsOpen(true)}>
+                    {t("Settings")}
+                    <ArrowUpRight size={12} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="local-dot" />
+                  Codex ·{" "}
+                  {isZh ? "一句话，安排妥当" : "A few words. A clearer day."}
+                  <span className="privacy-hint">
+                    {isZh
+                      ? "上下文将发送给模型提供方"
+                      : "Context is sent to your model provider"}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
           {error && (
             <div role="alert" className="error global-error">
@@ -659,7 +737,7 @@ export default function App() {
             </div>
           )}
           {view === "planned" && (
-            <div hidden={!!search}>
+            <div className="planned-container" hidden={!!search}>
               <PlannedView
                 data={data}
                 zone={zone}
@@ -835,12 +913,6 @@ export default function App() {
               </div>
             </>
           )}
-          <footer className="view-footer">
-            <span className="tiny-mark">t.</span>
-            {isZh
-              ? "把想法放下来，把日子过轻一点。"
-              : "Less on your mind. More room for your day."}
-          </footer>
         </div>
       </main>
       {task && !(view === "planned" && !search) && (
@@ -1051,6 +1123,10 @@ function TaskDetail({
     <aside className="detail">
       <div className="detail-top">
         <span>{t("TASK DETAILS")}</span>
+        <button className="primary detail-save" onClick={() => void save()}>
+          <Check size={14} />
+          {t("Save changes")}
+        </button>
         <button onClick={close} aria-label="Close details">
           <X size={18} />
         </button>
@@ -1075,7 +1151,7 @@ function TaskDetail({
             placeholder={t("Add a little context…")}
             value={draft.notes}
             onChange={(e) => set("notes", e.target.value)}
-            rows={4}
+            rows={3}
           />
         </label>
         <div className="form-grid">
@@ -1264,9 +1340,6 @@ function TaskDetail({
             onChange={(e) => setTagText(e.target.value)}
           />
         </label>
-        <button className="primary full" onClick={() => void save()}>
-          {t("Save changes")}
-        </button>
         <section className="detail-section">
           <h3>
             <ListChecks size={16} />

@@ -11,6 +11,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Check,
   List,
   Plus,
@@ -287,6 +288,27 @@ export default function PlannedView({
     task.due_at
       ? DateTime.fromISO(task.due_at).setZone(zone).toFormat("MM-dd HH:mm")
       : task.due_date;
+  const [dayLimit, setDayLimit] = useState(3);
+  const gridObserver = useRef<ResizeObserver | null>(null);
+  const monthPicker = useRef<HTMLInputElement>(null);
+  const observeGrid = useMemo(
+    () => (node: HTMLDivElement | null) => {
+      gridObserver.current?.disconnect();
+      if (!node) return;
+      const resize = () =>
+        setDayLimit(
+          Math.max(
+            1,
+            Math.min(3, Math.floor((node.clientHeight / 6 - 48) / 26)),
+          ),
+        );
+      gridObserver.current = new ResizeObserver(resize);
+      gridObserver.current.observe(node);
+      resize();
+    },
+    [],
+  );
+  useEffect(() => () => gridObserver.current?.disconnect(), []);
   const card = (r: CalendarRow, marker = false) => (
     <button
       key={r.key + (marker ? ":due" : "")}
@@ -304,27 +326,22 @@ export default function PlannedView({
       }}
       onClick={() => select(r)}
       title={r.task.title}
+      aria-pressed={selected === r.key}
+      style={{
+        borderLeftColor: data.lists.find((list) => list.id === r.task.list_id)
+          ?.color,
+      }}
       className={`calendar-card ${marker ? "deadline" : ""} ${r.task.status === "done" ? "completed" : ""} ${r.task.status === "todo" && isOverdue(r.task, zone) ? "overdue" : ""}`}
     >
       <span>
         {marker ? "◇ " : r.occurrence ? "↻ " : ""}
         {r.task.title}
       </span>
-      <small>
-        {marker
-          ? text("截止", "Due")
-          : r.occurrence
-            ? text("本次截止", "This occurrence")
-            : r.task.planned_date
-              ? text("安排", "Planned")
-              : r.task.due_kind === "none"
-                ? text("待安排", "Unscheduled")
-                : text("截止", "Due")}
-        {r.task.due_at && (!r.task.planned_date || marker)
-          ? " " +
-            DateTime.fromISO(r.task.due_at).setZone(zone).toFormat("HH:mm")
-          : ""}
-      </small>
+      {r.task.due_at && (!r.task.planned_date || marker) && (
+        <small className="calendar-time">
+          {DateTime.fromISO(r.task.due_at).setZone(zone).toFormat("HH:mm")}
+        </small>
+      )}
       {!marker && data.tasks.some((t) => t.parent_id === r.task.id) && (
         <small>
           {
@@ -394,9 +411,20 @@ export default function PlannedView({
           >
             <ChevronLeft size={18} />
           </button>
-          <label className="calendar-month-label">
-            <span className="sr-only">{text("月份", "Month")}</span>
+          <div className="calendar-month-label">
+            <button
+              className="calendar-month-trigger"
+              onClick={() => monthPicker.current?.showPicker()}
+            >
+              {DateTime.fromISO(month + "-01")
+                .setLocale(isZh ? "zh-CN" : "en")
+                .toFormat(isZh ? "yyyy年 M月" : "MMMM yyyy")}
+              <ChevronDown size={14} />
+            </button>
             <input
+              ref={monthPicker}
+              className="month-picker"
+              tabIndex={-1}
               type="month"
               aria-label={text("月份", "Month")}
               value={month}
@@ -406,7 +434,7 @@ export default function PlannedView({
                 }
               }}
             />
-          </label>
+          </div>
           <button
             aria-label={text("下个月", "Next month")}
             onClick={() => {
@@ -567,7 +595,7 @@ export default function PlannedView({
                   <span key={d}>{d}</span>
                 ))}
               </div>
-              <div className="calendar-grid">
+              <div className="calendar-grid" ref={observeGrid}>
                 {projection.days.map((d) => (
                   <div
                     key={d.date}
@@ -612,11 +640,11 @@ export default function PlannedView({
                       )}
                     </div>
                     {d.entries
-                      .slice(0, 3)
+                      .slice(0, dayLimit)
                       .map((entry) =>
                         card(entry.row, entry.kind === "deadline"),
                       )}
-                    {d.entries.length > 3 && (
+                    {d.entries.length > dayLimit && (
                       <button
                         className="calendar-more"
                         onClick={() => {
@@ -624,7 +652,7 @@ export default function PlannedView({
                           setSelected(null);
                         }}
                       >
-                        +{d.entries.length - 3} {text("项", "more")}
+                        +{d.entries.length - dayLimit} {text("项", "more")}
                       </button>
                     )}
                   </div>
