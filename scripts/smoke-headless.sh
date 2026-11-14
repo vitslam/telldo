@@ -13,4 +13,4 @@ trap 'kill "$TELLDO_XVFB_PID" 2>/dev/null || true; rm -f "$TELLDO_DISPLAY_FILE"'
 for i in {1..50}; do test -s "$TELLDO_DISPLAY_FILE" && break; sleep 0.1; done
 test -s "$TELLDO_DISPLAY_FILE" || { cat .tools/xvfb.log; exit 1; }
 export DISPLAY=":$(cat "$TELLDO_DISPLAY_FILE")"
-npm run test:smoke
+if (( $# )); then "$@"; else npm run test:smoke; fi

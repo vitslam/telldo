@@ -1,7 +1,7 @@
 {
   "name": "telldo",
   "productName": "Telldo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Say it. Get it on your list. Local-first personal tasks.",
   "author": "Telldo contributors",
   "license": "MIT",
@@ -21,7 +21,8 @@
     "test:headless": "bash scripts/smoke-headless.sh",
     "verify": "npm run build && npm test && npm run test:smoke",
     "test:ssh-runner": "python3 -m unittest discover -s tests -p test_ssh_runner.py",
-    "test:ssh-desktop": "node tests/ssh-desktop-smoke.mjs"
+    "test:ssh-desktop": "node tests/ssh-desktop-smoke.mjs",
+    "test:calendar": "node tests/calendar-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "0.468.0",

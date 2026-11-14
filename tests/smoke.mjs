@@ -74,14 +74,14 @@ try {
   );
   await page.getByPlaceholder("Search tasks, notes, tags…").fill("numbers");
   await page.waitForFunction(() =>
-    document
-      .querySelector(".task-title")
+    [...document.querySelectorAll(".task-title")]
+      .find((element) => element.getClientRects().length > 0)
       ?.textContent.includes("Check the numbers"),
   );
-  assert.equal(await page.locator(".task-row").count(), 1);
+  assert.equal(await page.locator(".task-row:visible").count(), 1);
   await page.getByPlaceholder("Search tasks, notes, tags…").fill("finance");
-  await page.waitForSelector(".task-row");
-  assert.equal(await page.locator(".task-row").count(), 1);
+  await page.waitForSelector(".task-row:visible");
+  assert.equal(await page.locator(".task-row:visible").count(), 1);
   await page.getByPlaceholder("Search tasks, notes, tags…").fill("");
   await page.locator(".task-row .check-button").first().click();
   snapshot = await invoke("snapshot");
@@ -135,7 +135,7 @@ try {
     tags: ["阅读"],
   });
   await page.reload();
-  await page.waitForSelector(".task-row");
+  await page.waitForSelector(".task-row:visible");
   await page.locator(".task-body").first().click();
   await page.waitForSelector(".detail");
   await page.screenshot({

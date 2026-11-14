@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import PlannedView from "./PlannedView";
+import { calendarMonthRange } from "../shared/calendar";
 import { DateTime } from "luxon";
 import {
   Sun,
@@ -192,7 +194,27 @@ export default function App() {
       message: string;
       run: () => Promise<unknown>;
     } | null>(null);
-  const reload = async () => setData(await api<Snapshot>("snapshot"));
+  const [planMonth, setPlanMonth] = useState(() =>
+    DateTime.local().toFormat("yyyy-MM"),
+  );
+  const rangeRef = useRef<
+    { start: string; end: string; zone: string } | undefined
+  >(undefined);
+  const loadGeneration = useRef(0);
+  const initializedPlanMonth = useRef(false);
+  const reload = async () => {
+    const generation = ++loadGeneration.current;
+    const next = await api<Snapshot>("snapshot", rangeRef.current);
+    if (generation === loadGeneration.current) {
+      if (!initializedPlanMonth.current) {
+        initializedPlanMonth.current = true;
+        setPlanMonth(
+          localDay(next.settings.timeZone || next.systemTimeZone).slice(0, 7),
+        );
+      }
+      setData(next);
+    }
+  };
   const lang =
     data?.settings.language === "system"
       ? data.systemLanguage
@@ -203,6 +225,10 @@ export default function App() {
     data?.settings.timeZone ||
     data?.systemTimeZone ||
     Intl.DateTimeFormat().resolvedOptions().timeZone;
+  rangeRef.current = { ...calendarMonthRange(planMonth), zone };
+  useEffect(() => {
+    void reload().catch((e) => setError(String(e)));
+  }, [planMonth, zone]);
   const act = async (fn: () => Promise<unknown>, message = "") => {
     setError("");
     try {
@@ -341,7 +367,9 @@ export default function App() {
       </div>
     );
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${view === "planned" && !search ? "planned-shell" : ""}`}
+    >
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">t.</div>
@@ -375,14 +403,16 @@ export default function App() {
               >
                 <I size={18} />
                 <span>{t(String(label))}</span>
-                <small>
-                  {
-                    allRows.filter(
-                      ({ task: a, template }) =>
-                        !template && taskInView(a, String(id), zone),
-                    ).length
-                  }
-                </small>
+                {id !== "planned" && (
+                  <small>
+                    {
+                      allRows.filter(
+                        ({ task: a, template }) =>
+                          !template && taskInView(a, String(id), zone),
+                      ).length
+                    }
+                  </small>
+                )}
               </button>
             );
           })}
@@ -532,10 +562,12 @@ export default function App() {
                       ? "Ideas without a deadline."
                       : "Your space to get things done.",
               )}
-              <span className="task-total">
-                {rows.filter((r) => r.task.status === "todo").length}{" "}
-                {t("tasks")}
-              </span>
+              {!(view === "planned" && !search) && (
+                <span className="task-total">
+                  {rows.filter((r) => r.task.status === "todo").length}{" "}
+                  {t("tasks")}
+                </span>
+              )}
             </p>
           </div>
           <section
@@ -626,126 +658,183 @@ export default function App() {
               </button>
             </div>
           )}
-          <div className="task-toolbar">
-            <span>
-              {t("To do")}
-              <span className="count-pill">{rows.length}</span>
-            </span>
-            <button onClick={() => setShowDone(!showDone)}>
-              {t(showDone ? "Hide completed" : "Show completed")}
-            </button>
-          </div>
-          <div className="quick-add">
-            <Plus size={20} />
-            <input
-              aria-label="New task"
-              placeholder={t("Add a task… e.g. 明天下午交周报")}
-              value={newTask}
-              onChange={(e) => setNewTask(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void addTask();
-              }}
-            />
-            <button
-              disabled={!newTask.trim() || !lists.length}
-              onClick={() => void addTask()}
-            >
-              {t("Add task")}
-              <span>↵</span>
-            </button>
-          </div>
-          <div className="task-list">
-            {rows.length ? (
-              rows.map(({ task: item, occurrence, template }) => (
-                <div
-                  key={item.id + (occurrence?.occurrence_key || "")}
-                  className={`task-row ${selected === item.id ? "selected" : ""} ${item.status === "done" ? "completed" : ""}`}
-                >
-                  <button
-                    className={`check-button ${item.priority} ${item.status === "done" ? "checked" : ""}`}
-                    disabled={template}
-                    aria-label={`${item.status === "done" ? t("Reopen") : t("Completed")} ${item.title}`}
-                    onClick={() =>
-                      void act(() =>
-                        occurrence
-                          ? api(
-                              "updateOccurrence",
-                              occurrence.series_id,
-                              occurrence.occurrence_key,
-                              {
-                                status:
-                                  item.status === "done" ? "todo" : "done",
-                              },
-                            )
-                          : api("updateTask", item.id, item.version, {
-                              status: item.status === "done" ? "todo" : "done",
-                            }),
-                      )
+          {view === "planned" && (
+            <div hidden={!!search}>
+              <PlannedView
+                data={data}
+                zone={zone}
+                isZh={isZh}
+                month={planMonth}
+                setMonth={setPlanMonth}
+                showDone={showDone}
+                setShowDone={setShowDone}
+                reload={reload}
+                openTemplate={(item) => {
+                  setView(item.list_id);
+                  setSelected(item.id);
+                }}
+                renderDetails={(item, dates, close) => (
+                  <TaskDetail
+                    key={item.id + ":" + item.version}
+                    task={item}
+                    data={data}
+                    zone={zone}
+                    t={t}
+                    close={close}
+                    act={act}
+                    calendarDates={dates}
+                    selectTask={(id) => {
+                      setView(item.list_id);
+                      setSelected(id);
+                    }}
+                    requestDelete={() =>
+                      setConfirm({
+                        message: t("Delete this task and its subtasks?"),
+                        run: async () => {
+                          await api("deleteTask", item.id, item.version);
+                          close();
+                        },
+                      })
                     }
-                  >
-                    {item.status === "done" && <Check size={13} />}
-                  </button>
-                  <button
-                    className="task-body"
-                    onClick={() => setSelected(item.id)}
-                  >
-                    <span className="task-title">
-                      {item.title}
-                      {template && (
-                        <span className="pill">{t("Recurring template")}</span>
-                      )}
-                      {occurrence && <Repeat2 size={13} />}
-                    </span>
-                    <span className="task-meta">
-                      {!currentList && (
-                        <span>
-                          {lists.find((l) => l.id === item.list_id)?.name}
-                        </span>
-                      )}
-                      {item.tags.map((tag) => (
-                        <span className="tag" key={tag}>
-                          #{tag}
-                        </span>
-                      ))}
-                      {tasks.some((t) => t.parent_id === item.id) && (
-                        <span>
-                          <ListChecks size={12} />
-                          {
-                            tasks.filter(
-                              (t) =>
-                                t.parent_id === item.id && t.status === "done",
-                            ).length
-                          }
-                          /{tasks.filter((t) => t.parent_id === item.id).length}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                  <span
-                    className={`task-date ${isOverdue(item, zone) && item.status === "todo" ? "overdue" : ""}`}
-                  >
-                    {item.reminder_at && <Bell size={12} />} {dateLabel(item)}
-                  </span>
-                  <span className={`priority-dot ${item.priority}`} />
-                </div>
-              ))
-            ) : (
-              <div className="empty">
-                <div className="empty-art">
-                  <div className="paper">
-                    <span />
-                    <span />
-                    <span />
-                    <Check size={23} />
-                  </div>
-                  <span className="orbit one" />
-                  <span className="orbit two" />
-                </div>
-                <h3>{t("All done for now")}</h3>
-                <p>{t("A little space for your next idea.")}</p>
+                  />
+                )}
+              />
+            </div>
+          )}
+          {!(view === "planned" && !search) && (
+            <>
+              <div className="task-toolbar">
+                <span>
+                  {t("To do")}
+                  <span className="count-pill">{rows.length}</span>
+                </span>
+                <button onClick={() => setShowDone(!showDone)}>
+                  {t(showDone ? "Hide completed" : "Show completed")}
+                </button>
               </div>
-            )}
-          </div>
+              <div className="quick-add">
+                <Plus size={20} />
+                <input
+                  aria-label="New task"
+                  placeholder={t("Add a task… e.g. 明天下午交周报")}
+                  value={newTask}
+                  onChange={(e) => setNewTask(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void addTask();
+                  }}
+                />
+                <button
+                  disabled={!newTask.trim() || !lists.length}
+                  onClick={() => void addTask()}
+                >
+                  {t("Add task")}
+                  <span>↵</span>
+                </button>
+              </div>
+              <div className="task-list">
+                {rows.length ? (
+                  rows.map(({ task: item, occurrence, template }) => (
+                    <div
+                      key={item.id + (occurrence?.occurrence_key || "")}
+                      className={`task-row ${selected === item.id ? "selected" : ""} ${item.status === "done" ? "completed" : ""}`}
+                    >
+                      <button
+                        className={`check-button ${item.priority} ${item.status === "done" ? "checked" : ""}`}
+                        disabled={template}
+                        aria-label={`${item.status === "done" ? t("Reopen") : t("Completed")} ${item.title}`}
+                        onClick={() =>
+                          void act(() =>
+                            occurrence
+                              ? api(
+                                  "updateOccurrence",
+                                  occurrence.series_id,
+                                  occurrence.occurrence_key,
+                                  {
+                                    status:
+                                      item.status === "done" ? "todo" : "done",
+                                  },
+                                  occurrence.version ?? 1,
+                                )
+                              : api("updateTask", item.id, item.version, {
+                                  status:
+                                    item.status === "done" ? "todo" : "done",
+                                }),
+                          )
+                        }
+                      >
+                        {item.status === "done" && <Check size={13} />}
+                      </button>
+                      <button
+                        className="task-body"
+                        onClick={() => setSelected(item.id)}
+                      >
+                        <span className="task-title">
+                          {item.title}
+                          {template && (
+                            <span className="pill">
+                              {t("Recurring template")}
+                            </span>
+                          )}
+                          {occurrence && <Repeat2 size={13} />}
+                        </span>
+                        <span className="task-meta">
+                          {!currentList && (
+                            <span>
+                              {lists.find((l) => l.id === item.list_id)?.name}
+                            </span>
+                          )}
+                          {item.tags.map((tag) => (
+                            <span className="tag" key={tag}>
+                              #{tag}
+                            </span>
+                          ))}
+                          {tasks.some((t) => t.parent_id === item.id) && (
+                            <span>
+                              <ListChecks size={12} />
+                              {
+                                tasks.filter(
+                                  (t) =>
+                                    t.parent_id === item.id &&
+                                    t.status === "done",
+                                ).length
+                              }
+                              /
+                              {
+                                tasks.filter((t) => t.parent_id === item.id)
+                                  .length
+                              }
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                      <span
+                        className={`task-date ${isOverdue(item, zone) && item.status === "todo" ? "overdue" : ""}`}
+                      >
+                        {item.reminder_at && <Bell size={12} />}{" "}
+                        {dateLabel(item)}
+                      </span>
+                      <span className={`priority-dot ${item.priority}`} />
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty">
+                    <div className="empty-art">
+                      <div className="paper">
+                        <span />
+                        <span />
+                        <span />
+                        <Check size={23} />
+                      </div>
+                      <span className="orbit one" />
+                      <span className="orbit two" />
+                    </div>
+                    <h3>{t("All done for now")}</h3>
+                    <p>{t("A little space for your next idea.")}</p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           <footer className="view-footer">
             <span className="tiny-mark">t.</span>
             {isZh
@@ -754,7 +843,7 @@ export default function App() {
           </footer>
         </div>
       </main>
-      {task && (
+      {task && !(view === "planned" && !search) && (
         <TaskDetail
           key={task.id + ":" + task.version}
           task={task}
@@ -872,6 +961,7 @@ function TaskDetail({
   act,
   requestDelete,
   selectTask,
+  calendarDates,
 }: {
   task: Task;
   data: Snapshot;
@@ -881,6 +971,7 @@ function TaskDetail({
   act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
   requestDelete: () => void;
   selectTask: (id: string) => void;
+  calendarDates?: ReactNode;
 }) {
   const [draft, setDraft] = useState<TaskPatch>({ ...task }),
     [natural, setNatural] = useState(""),
@@ -907,13 +998,19 @@ function TaskDetail({
           notes: draft.notes,
           list_id: draft.list_id,
           priority: draft.priority,
-          due_kind: draft.due_kind,
-          due_date: draft.due_kind === "none" ? null : draft.due_date,
-          due_at: draft.due_kind === "datetime" ? draft.due_at : null,
-          time_zone:
-            draft.due_kind === "datetime" ? draft.time_zone || zone : null,
-          planned_date: draft.planned_date || null,
-          reminder_at: draft.reminder_at || null,
+          ...(!calendarDates
+            ? {
+                due_kind: draft.due_kind,
+                due_date: draft.due_kind === "none" ? null : draft.due_date,
+                due_at: draft.due_kind === "datetime" ? draft.due_at : null,
+                time_zone:
+                  draft.due_kind === "datetime"
+                    ? draft.time_zone || zone
+                    : null,
+                planned_date: draft.planned_date || null,
+                reminder_at: draft.reminder_at || null,
+              }
+            : {}),
           tags: tagText
             .split(/[,，]/)
             .map((s) => s.trim())
@@ -1014,146 +1111,151 @@ function TaskDetail({
             {t("Remove repeat before changing its date or time zone.")}
           </p>
         )}
-        <label>
-          {t("Natural date")}
-          <div className="inline-input">
-            <input
-              disabled={!!series}
-              placeholder="明天下午 3 点 / 下周五"
-              value={natural}
-              onChange={(e) => setNatural(e.target.value)}
-            />
-            <button
-              disabled={!!series}
-              onClick={() =>
-                void act(async () => {
-                  const parsed = await api<TaskPatch>("parseDate", natural);
-                  setDraft((d) => ({
-                    ...d,
-                    due_kind: parsed.due_kind,
-                    due_date: parsed.due_date,
-                    due_at: parsed.due_at,
-                    time_zone: parsed.time_zone,
-                  }));
-                })
-              }
-            >
-              {t("Parse")}
-            </button>
-          </div>
-        </label>
-        <label>
-          {t("Due date")}
-          <select
-            disabled={!!series}
-            value={draft.due_kind}
-            onChange={(e) =>
-              setDraft((d) => ({
-                ...d,
-                due_kind: e.target.value as Task["due_kind"],
-                due_date: d.due_date || localDay(zone),
-              }))
-            }
-          >
-            <option value="none">{t("No date")}</option>
-            <option value="date">{t("Date only")}</option>
-            <option value="datetime">{t("Date & time")}</option>
-          </select>
-        </label>
-        {draft.due_kind === "date" && (
-          <input
-            disabled={!!series}
-            type="date"
-            aria-label="Due calendar date"
-            value={draft.due_date || ""}
-            onChange={(e) => set("due_date", e.target.value)}
-          />
-        )}
-        {draft.due_kind === "datetime" && (
+        {calendarDates || (
           <>
             <label>
-              {t("Date & time")}
-              <input
-                disabled={!!series}
-                type="datetime-local"
-                value={
-                  draft.due_at
-                    ? DateTime.fromISO(draft.due_at)
-                        .setZone(draft.time_zone || zone)
-                        .toFormat("yyyy-MM-dd'T'HH:mm")
-                    : ""
-                }
-                onChange={(e) => {
-                  const dt = DateTime.fromISO(e.target.value, {
-                    zone: draft.time_zone || zone,
-                  });
-                  setDraft((d) => ({
-                    ...d,
-                    due_at: dt.toUTC().toISO(),
-                    due_date: dt.toISODate(),
-                    time_zone: d.time_zone || zone,
-                  }));
-                }}
-              />
+              {t("Natural date")}
+              <div className="inline-input">
+                <input
+                  disabled={!!series}
+                  placeholder="明天下午 3 点 / 下周五"
+                  value={natural}
+                  onChange={(e) => setNatural(e.target.value)}
+                />
+                <button
+                  disabled={!!series}
+                  onClick={() =>
+                    void act(async () => {
+                      const parsed = await api<TaskPatch>("parseDate", natural);
+                      setDraft((d) => ({
+                        ...d,
+                        due_kind: parsed.due_kind,
+                        due_date: parsed.due_date,
+                        due_at: parsed.due_at,
+                        time_zone: parsed.time_zone,
+                      }));
+                    })
+                  }
+                >
+                  {t("Parse")}
+                </button>
+              </div>
             </label>
             <label>
-              {t("Timezone (IANA)")}
-              <input
+              {t("Due date")}
+              <select
                 disabled={!!series}
-                value={draft.time_zone || zone}
+                value={draft.due_kind}
                 onChange={(e) =>
                   setDraft((d) => ({
                     ...d,
-                    time_zone: e.target.value,
-                    due_date:
-                      d.due_at &&
-                      DateTime.fromISO(d.due_at).setZone(e.target.value).isValid
-                        ? DateTime.fromISO(d.due_at)
-                            .setZone(e.target.value)
-                            .toISODate()
-                        : d.due_date,
+                    due_kind: e.target.value as Task["due_kind"],
+                    due_date: d.due_date || localDay(zone),
                   }))
                 }
-              />
+              >
+                <option value="none">{t("No date")}</option>
+                <option value="date">{t("Date only")}</option>
+                <option value="datetime">{t("Date & time")}</option>
+              </select>
             </label>
+            {draft.due_kind === "date" && (
+              <input
+                disabled={!!series}
+                type="date"
+                aria-label="Due calendar date"
+                value={draft.due_date || ""}
+                onChange={(e) => set("due_date", e.target.value)}
+              />
+            )}
+            {draft.due_kind === "datetime" && (
+              <>
+                <label>
+                  {t("Date & time")}
+                  <input
+                    disabled={!!series}
+                    type="datetime-local"
+                    value={
+                      draft.due_at
+                        ? DateTime.fromISO(draft.due_at)
+                            .setZone(draft.time_zone || zone)
+                            .toFormat("yyyy-MM-dd'T'HH:mm")
+                        : ""
+                    }
+                    onChange={(e) => {
+                      const dt = DateTime.fromISO(e.target.value, {
+                        zone: draft.time_zone || zone,
+                      });
+                      setDraft((d) => ({
+                        ...d,
+                        due_at: dt.toUTC().toISO(),
+                        due_date: dt.toISODate(),
+                        time_zone: d.time_zone || zone,
+                      }));
+                    }}
+                  />
+                </label>
+                <label>
+                  {t("Timezone (IANA)")}
+                  <input
+                    disabled={!!series}
+                    value={draft.time_zone || zone}
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        time_zone: e.target.value,
+                        due_date:
+                          d.due_at &&
+                          DateTime.fromISO(d.due_at).setZone(e.target.value)
+                            .isValid
+                            ? DateTime.fromISO(d.due_at)
+                                .setZone(e.target.value)
+                                .toISODate()
+                            : d.due_date,
+                      }))
+                    }
+                  />
+                </label>
+              </>
+            )}
+            <div className="form-grid">
+              <label>
+                {t("Planned date")}
+                <input
+                  type="date"
+                  value={draft.planned_date || ""}
+                  onChange={(e) => set("planned_date", e.target.value)}
+                />
+              </label>
+              <label>
+                {t("Reminder")}
+                <input
+                  aria-label="Reminder"
+                  type="datetime-local"
+                  value={
+                    draft.reminder_at
+                      ? DateTime.fromISO(draft.reminder_at)
+                          .setZone(draft.time_zone || zone)
+                          .toFormat("yyyy-MM-dd'T'HH:mm")
+                      : ""
+                  }
+                  onChange={(e) =>
+                    set(
+                      "reminder_at",
+                      e.target.value
+                        ? DateTime.fromISO(e.target.value, {
+                            zone: draft.time_zone || zone,
+                          })
+                            .toUTC()
+                            .toISO()
+                        : null,
+                    )
+                  }
+                />
+              </label>
+            </div>
           </>
         )}
-        <div className="form-grid">
-          <label>
-            {t("Planned date")}
-            <input
-              type="date"
-              value={draft.planned_date || ""}
-              onChange={(e) => set("planned_date", e.target.value)}
-            />
-          </label>
-          <label>
-            {t("Reminder")}
-            <input
-              aria-label="Reminder"
-              type="datetime-local"
-              value={
-                draft.reminder_at
-                  ? DateTime.fromISO(draft.reminder_at)
-                      .setZone(draft.time_zone || zone)
-                      .toFormat("yyyy-MM-dd'T'HH:mm")
-                  : ""
-              }
-              onChange={(e) =>
-                set(
-                  "reminder_at",
-                  e.target.value
-                    ? DateTime.fromISO(e.target.value, {
-                        zone: draft.time_zone || zone,
-                      })
-                        .toUTC()
-                        .toISO()
-                    : null,
-                )
-              }
-            />
-          </label>
-        </div>
         <label>
           {t("Tags")}
           <input
@@ -1366,7 +1468,10 @@ function TaskDetail({
                     <input
                       aria-label={t("Reschedule instance")}
                       type="date"
-                      value={o.override_date || o.due_date}
+                      value={
+                        taskFromOccurrence(task, o, series.tzid).due_date ||
+                        o.due_date
+                      }
                       onChange={(e) =>
                         void act(() =>
                           api(
@@ -1374,6 +1479,7 @@ function TaskDetail({
                             o.series_id,
                             o.occurrence_key,
                             { override_date: e.target.value },
+                            o.version ?? 1,
                           ),
                         )
                       }
@@ -1388,6 +1494,7 @@ function TaskDetail({
                             o.series_id,
                             o.occurrence_key,
                             { status: e.target.value },
+                            o.version ?? 1,
                           ),
                         )
                       }
