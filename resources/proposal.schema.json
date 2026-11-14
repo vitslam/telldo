@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Telldo task proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "summary",
+    "idempotency_key",
+    "risk",
+    "actions"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "high"
+      ]
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "target_id",
+          "temp_id",
+          "expected_version",
+          "patch"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "create",
+              "update",
+              "complete",
+              "uncomplete",
+              "reschedule",
+              "delete",
+              "add_subtask",
+              "set_tags"
+            ]
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "temp_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "patch": {
+            "type": "array",
+            "description": "Changed fields only. Empty array for complete, uncomplete or delete. Null value explicitly clears a nullable date or parent field.",
+            "maxItems": 14,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "key",
+                "value"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "list_id",
+                    "parent_id",
+                    "title",
+                    "notes",
+                    "status",
+                    "priority",
+                    "due_kind",
+                    "due_date",
+                    "due_at",
+                    "time_zone",
+                    "planned_date",
+                    "reminder_at",
+                    "sort_order",
+                    "tags"
+                  ]
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
