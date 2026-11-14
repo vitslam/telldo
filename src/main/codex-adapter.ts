@@ -1,3 +1,5 @@
+import { CodexProgressTracker, type AIProgress } from "../shared/ai-progress";
+import { conversationContext } from "../shared/conversation";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   access,
@@ -13,7 +15,7 @@ import { tmpdir } from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { Capabilities, ProposalInput } from "../shared/types";
-import { parseProposal } from "../shared/proposal";
+import { parseAIResponse } from "../shared/proposal";
 
 export type SpawnProcess = (
   file: string,
@@ -103,34 +105,31 @@ function contextForPrompt(
   context: Record<string, unknown>,
 ): Record<string, unknown> {
   const lists = Array.isArray(context.lists)
-    ? context.lists
-        .slice(0, 30)
-        .map((x: any) => ({
-          id: x.id,
-          name: String(x.name ?? "").slice(0, 120),
-        }))
+    ? context.lists.slice(0, 100).map((x: any) => ({
+        id: x.id,
+        name: String(x.name ?? "").slice(0, 120),
+      }))
     : [];
   const tasks = Array.isArray(context.tasks)
-    ? context.tasks
-        .slice(0, 30)
-        .map((x: any) => ({
-          id: x.id,
-          version: x.version,
-          list_id: x.list_id,
-          parent_id: x.parent_id,
-          title: String(x.title ?? "").slice(0, 300),
-          notes: String(x.notes ?? "").slice(0, 400),
-          status: x.status,
-          priority: x.priority,
-          due_kind: x.due_kind,
-          due_date: x.due_date,
-          due_at: x.due_at,
-          time_zone: x.time_zone,
-          planned_date: x.planned_date,
-          tags: Array.isArray(x.tags) ? x.tags.slice(0, 10) : [],
-        }))
+    ? context.tasks.slice(0, 100).map((x: any) => ({
+        id: x.id,
+        version: x.version,
+        list_id: x.list_id,
+        parent_id: x.parent_id,
+        title: String(x.title ?? "").slice(0, 300),
+        notes: String(x.notes ?? "").slice(0, 400),
+        status: x.status,
+        priority: x.priority,
+        due_kind: x.due_kind,
+        due_date: x.due_date,
+        due_at: x.due_at,
+        time_zone: x.time_zone,
+        planned_date: x.planned_date,
+        tags: Array.isArray(x.tags) ? x.tags.slice(0, 10) : [],
+      }))
     : [];
   return {
+    ...conversationContext(context),
     today: context.today,
     timeZone: context.timeZone ?? context.time_zone,
     currentListId: context.currentListId,
@@ -289,7 +288,7 @@ export class CodexAdapter {
   async run(
     sourceText: string,
     context: Record<string, unknown>,
-    onProgress: (message: string) => void = () => {},
+    onProgress: (message: AIProgress) => void = () => {},
   ): Promise<{ proposal: ProposalInput; raw: string }> {
     if (this.abortCurrent || this.probing)
       throw new Error(
@@ -307,6 +306,7 @@ export class CodexAdapter {
       earlyAbort = error;
     };
     let dir: string | undefined;
+    const progress = new CodexProgressTracker(onProgress);
     try {
       const resourceDir =
         this.options.resourceDir ?? join(__dirname, "../../resources");
@@ -428,14 +428,7 @@ export class CodexAdapter {
             typeof event.item.text === "string"
           )
             finalMessage = event.item.text;
-          const type = String(event.type ?? "");
-          if (type === "turn.started")
-            onProgress("Planning tasks… / 正在整理任务…");
-          else if (
-            type === "item.completed" &&
-            event.item?.type === "agent_message"
-          )
-            onProgress("Validating proposal… / 正在校验提案…");
+          progress.consume(event);
         };
         child.stdout.on("data", (data: Buffer) => {
           total += data.length;
@@ -491,9 +484,10 @@ export class CodexAdapter {
             fail(error instanceof Error ? error : new Error(String(error)));
           }
         });
-        onProgress("Starting Codex… / 正在启动 Codex…");
+        progress.activity("connection", "running", "启动本机 Codex CLI");
         child.stdin.end(prompt);
       });
+      progress.activity("validation", "running");
       let decoded: unknown;
       try {
         decoded = JSON.parse(raw);
@@ -502,19 +496,16 @@ export class CodexAdapter {
           "Codex returned invalid JSON. No tasks were changed. / Codex 未返回严格 JSON，任务未更改。",
         );
       }
-      if (
-        decoded &&
-        typeof decoded === "object" &&
-        Array.isArray((decoded as any).actions) &&
-        (decoded as any).actions.length === 0
-      )
-        throw new Error(
-          String(
-            (decoded as any).summary ??
-              "Please clarify the request. / 请补充说明。",
-          ).slice(0, 2000),
-        );
-      return { proposal: parseProposal(decoded), raw };
+      const proposal = parseAIResponse(decoded);
+      progress.summary(raw, true);
+      progress.activity(
+        "validation",
+        "completed",
+        proposal.actions.length
+          ? `已校验 ${proposal.actions.length} 项待确认更改`
+          : "已校验回复，无任务更改",
+      );
+      return { proposal, raw };
     } finally {
       this.abortCurrent = null;
       if (dir) await rm(dir, { recursive: true, force: true });

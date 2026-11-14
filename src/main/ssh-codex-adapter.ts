@@ -1,9 +1,15 @@
+import {
+  aiActivity,
+  parseAIProgress,
+  type AIProgress,
+} from "../shared/ai-progress";
+import { conversationContext } from "../shared/conversation";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { Capabilities, ProposalInput } from "../shared/types";
-import { parseProposal } from "../shared/proposal";
+import { parseAIResponse } from "../shared/proposal";
 import type { SpawnProcess } from "./codex-adapter";
 
 export interface SshCodexSettings {
@@ -128,37 +134,34 @@ function boundedContext(
   context: Record<string, unknown>,
 ): Record<string, unknown> {
   return {
+    ...conversationContext(context),
     today: context.today,
     timeZone: context.timeZone ?? context.time_zone,
     currentListId: context.currentListId,
     contextLimited: true,
     lists: Array.isArray(context.lists)
-      ? context.lists
-          .slice(0, 30)
-          .map((x: any) => ({
-            id: x.id,
-            name: String(x.name ?? "").slice(0, 120),
-          }))
+      ? context.lists.slice(0, 100).map((x: any) => ({
+          id: x.id,
+          name: String(x.name ?? "").slice(0, 120),
+        }))
       : [],
     tasks: Array.isArray(context.tasks)
-      ? context.tasks
-          .slice(0, 30)
-          .map((x: any) => ({
-            id: x.id,
-            version: x.version,
-            list_id: x.list_id,
-            parent_id: x.parent_id,
-            title: String(x.title ?? "").slice(0, 300),
-            notes: String(x.notes ?? "").slice(0, 400),
-            status: x.status,
-            priority: x.priority,
-            due_kind: x.due_kind,
-            due_date: x.due_date,
-            due_at: x.due_at,
-            time_zone: x.time_zone,
-            planned_date: x.planned_date,
-            tags: Array.isArray(x.tags) ? x.tags.slice(0, 10) : [],
-          }))
+      ? context.tasks.slice(0, 100).map((x: any) => ({
+          id: x.id,
+          version: x.version,
+          list_id: x.list_id,
+          parent_id: x.parent_id,
+          title: String(x.title ?? "").slice(0, 300),
+          notes: String(x.notes ?? "").slice(0, 400),
+          status: x.status,
+          priority: x.priority,
+          due_kind: x.due_kind,
+          due_date: x.due_date,
+          due_at: x.due_at,
+          time_zone: x.time_zone,
+          planned_date: x.planned_date,
+          tags: Array.isArray(x.tags) ? x.tags.slice(0, 10) : [],
+        }))
       : [],
   };
 }
@@ -208,7 +211,7 @@ export class SshCodexAdapter {
   }
   private exchange(
     envelope: Record<string, unknown>,
-    onProgress: (message: string) => void,
+    onProgress: (message: AIProgress) => void,
     timeoutMs: number,
   ): Promise<{ capabilities?: Capabilities; raw?: string }> {
     const settings = validateSshSettings(this.settings);
@@ -301,6 +304,15 @@ export class SshCodexAdapter {
           cancel(
             new Error("Invalid SSH helper protocol. / SSH 助手协议无效。"),
           );
+          return;
+        }
+        if (frame.type === "progress" && frame.event !== undefined) {
+          const progress = parseAIProgress(frame.event);
+          if (progress) onProgress(progress);
+          else
+            cancel(
+              new Error("Invalid SSH progress event. / SSH 进度事件无效。"),
+            );
           return;
         }
         if (frame.type === "progress" && typeof frame.message === "string") {
@@ -426,7 +438,7 @@ export class SshCodexAdapter {
   async run(
     sourceText: string,
     context: Record<string, unknown>,
-    onProgress: (message: string) => void = () => {},
+    onProgress: (message: AIProgress) => void = () => {},
   ): Promise<{ proposal: ProposalInput; raw: string }> {
     if (this.abortCurrent)
       throw new Error(
@@ -461,12 +473,14 @@ export class SshCodexAdapter {
         120000,
         Math.max(1, this.options.timeoutMs ?? 120000),
       );
+      onProgress(aiActivity("connection", "running", "连接远端 Codex CLI"));
       const result = await this.exchange(
         { mode: "run", timeoutMs, prompt, schema },
         onProgress,
         timeoutMs + (this.options.transportGraceMs ?? 10000),
       );
       const raw = result.raw!;
+      onProgress(aiActivity("validation", "running"));
       let decoded: unknown;
       try {
         decoded = JSON.parse(raw);
@@ -475,19 +489,18 @@ export class SshCodexAdapter {
           "Remote Codex returned invalid JSON. No tasks were changed. / 远端 Codex 未返回严格 JSON，任务未更改。",
         );
       }
-      if (
-        decoded &&
-        typeof decoded === "object" &&
-        Array.isArray((decoded as any).actions) &&
-        (decoded as any).actions.length === 0
-      )
-        throw new Error(
-          String(
-            (decoded as any).summary ??
-              "Please clarify the request. / 请补充说明。",
-          ).slice(0, 2000),
-        );
-      return { proposal: parseProposal(decoded), raw };
+      const proposal = parseAIResponse(decoded);
+      onProgress({ type: "response", text: proposal.summary });
+      onProgress(
+        aiActivity(
+          "validation",
+          "completed",
+          proposal.actions.length
+            ? `已校验 ${proposal.actions.length} 项待确认更改`
+            : "已校验回复，无任务更改",
+        ),
+      );
+      return { proposal, raw };
     } finally {
       this.abortCurrent = null;
     }

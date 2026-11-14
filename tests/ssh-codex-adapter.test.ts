@@ -1,3 +1,4 @@
+import type { AIProgress } from "../src/shared/ai-progress";
 import { describe, it, expect } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -15,8 +16,7 @@ const settings: SshCodexSettings = {
   user: "developer",
   port: 2222,
   codexPath: "/home/developer/.local/bin/codex",
-  runnerPath:
-    "/opt/telldo/resources/ssh-codex-runner.py",
+  runnerPath: "/opt/telldo/resources/ssh-codex-runner.py",
   proxyUrl: "http://192.0.2.10:3128",
 };
 const caps = {
@@ -60,6 +60,7 @@ type Scenario =
   | "auth"
   | "host-key"
   | "missing-runner"
+  | "invalid-progress"
   | "protocol"
   | "nonzero-after-result"
   | "late-error"
@@ -158,6 +159,13 @@ function harness(
           child.stdout.write("login banner that breaks protocol\n");
           return;
         }
+        if (scenario === "invalid-progress") {
+          frame({
+            type: "progress",
+            event: { type: "reasoning", text: "hidden" },
+          });
+          return;
+        }
         if (scenario === "empty") {
           close();
           return;
@@ -172,6 +180,20 @@ function harness(
           return;
         }
         frame({ type: "progress", message: "整理任务…" });
+        frame({
+          type: "progress",
+          event: {
+            type: "activity",
+            id: "model",
+            phase: "model",
+            status: "running",
+            label: "处理请求",
+          },
+        });
+        frame({
+          type: "progress",
+          event: { type: "response", text: "Add report" },
+        });
         const raw =
           scenario === "bad-json"
             ? "```json\n{}\n```"
@@ -223,7 +245,7 @@ describe("SSH transport boundary", () => {
       today: "2026-11-14",
       timeZone: "Asia/Shanghai",
       lists: [{ id: "work", name: "工作" }],
-      tasks: Array.from({ length: 90 }, (_, i) => ({
+      tasks: Array.from({ length: 120 }, (_, i) => ({
         id: String(i),
         title: "Task",
         version: 1,
@@ -246,18 +268,31 @@ describe("SSH transport boundary", () => {
     expect(call.request.proxyUrl).toBe(settings.proxyUrl);
     expect(call.request.prompt).not.toContain("no-send");
     expect(call.request.prompt).not.toContain("/private/tasks.db");
-    expect(call.request.prompt).not.toContain('"id":"30"');
+    expect(call.request.prompt).not.toContain('"id":"100"');
     expect(call.eof).toBe(false); // Do not cancel the helper immediately after sending the request.
     expect(call.options.env).not.toHaveProperty("OPENAI_API_KEY");
     expect(call.options.env).not.toHaveProperty("CODEX_HOME");
   });
   it("handles fragmented UTF-8 framed output", async () => {
     const { adapter } = await ready("fragmented");
-    const messages: string[] = [];
+    const messages: AIProgress[] = [];
     expect(
       (await adapter.run("task", {}, (m) => messages.push(m))).proposal.summary,
     ).toBe("添加交周报");
-    expect(messages).toEqual(["整理任务…"]);
+    expect(messages).toContain("整理任务…");
+    expect(messages).toContainEqual({
+      type: "activity",
+      id: "model",
+      phase: "model",
+      status: "running",
+      label: "处理请求",
+    });
+    expect(messages).toContainEqual({ type: "response", text: "Add report" });
+    expect(messages).toContainEqual({ type: "response", text: "添加交周报" });
+    expect(messages.at(-1)).toMatchObject({
+      phase: "validation",
+      status: "completed",
+    });
   });
   it.each([
     "auth",
@@ -275,6 +310,7 @@ describe("SSH transport boundary", () => {
   });
   it.each([
     "protocol",
+    "invalid-progress",
     "nonzero-after-result",
     "late-error",
     "duplicate",
@@ -282,7 +318,6 @@ describe("SSH transport boundary", () => {
     "bad-schema",
     "tool-error",
     "empty",
-    "clarification",
   ] as const)(
     "rejects %s before returning an applicable proposal",
     async (scenario) => {
@@ -290,6 +325,12 @@ describe("SSH transport boundary", () => {
       await expect(adapter.run("task", {})).rejects.toThrow();
     },
   );
+  it("returns a read-only clarification as a successful response", async () => {
+    const { adapter } = await ready("clarification");
+    const result = await adapter.run("task", {});
+    expect(result.proposal.actions).toEqual([]);
+    expect(result.proposal.summary).toBe("请说明目标清单");
+  });
   it("cancels by sending EOF to the remote helper, and rejects overlaps", async () => {
     const { adapter, calls } = await ready("timeout");
     const pending = adapter.run("task", {});

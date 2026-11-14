@@ -47,6 +47,11 @@ if behavior=='malformed':print('not JSON');sys.exit(0)
 raw=os.environ['FAKE_PROPOSAL'] if behavior!='badfinal' else '```json\n{}\n```'
 if '--output-last-message' in args:pathlib.Path(args[args.index('--output-last-message')+1]).write_text(raw)
 print(json.dumps({'type':'thread.started','thread_id':'fake'}),flush=True)
+print(json.dumps({'type':'turn.started'}),flush=True)
+if behavior=='progress':
+ print(json.dumps({'type':'item.completed','item':{'type':'reasoning','text':'PRIVATE REASONING'}}),flush=True)
+ print(json.dumps({'type':'item.updated','item':{'type':'agent_message','text':'{"summary":"This is a sufficiently long partial answer'}}),flush=True)
+
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':raw}}),flush=True)
 print(json.dumps({'type':'turn.completed'}),flush=True)
 '''
@@ -129,6 +134,17 @@ class SSHRunnerTests(unittest.TestCase):
         code, frames = self.start(mode="probe", codex_path="").finish()
         self.assertEqual(code, 0)
         self.assertTrue(frames[-1]["capabilities"]["available"])
+
+    def test_public_progress_hides_reasoning_and_streams_summary_only(self):
+        code, frames = self.start(behavior="progress").finish()
+        self.assertEqual(code, 0)
+        progress = [frame["event"] for frame in frames if frame["type"] == "progress"]
+        text = json.dumps(progress)
+        self.assertNotIn("PRIVATE REASONING", text)
+        self.assertNotIn("idempotency_key", text)
+        replies = [event["text"] for event in progress if event["type"] == "response"]
+        self.assertEqual(replies, ["This is a sufficiently long partial answer", PROPOSAL["summary"]])
+        self.assertTrue(any(event.get("phase") == "model" and event.get("status") == "completed" for event in progress))
 
     def test_success_argv_temp_cwd_proxy_and_final_result(self):
         code, frames = self.start().finish()

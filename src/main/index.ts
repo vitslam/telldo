@@ -1,3 +1,5 @@
+import type { AIActivity, AIProgress } from "../shared/ai-progress";
+import { DateTime } from "luxon";
 import {
   app,
   BrowserWindow,
@@ -16,7 +18,11 @@ import { CalendarService } from "./calendar-service";
 import type { ScheduleService } from "./schedule-service";
 import { CodexAdapter } from "./codex-adapter";
 import { SshCodexAdapter } from "./ssh-codex-adapter";
-import { parseNaturalDate, localDay } from "../shared/dates";
+import {
+  parseNaturalDate,
+  localDay,
+  taskFromOccurrence,
+} from "../shared/dates";
 import type { Settings, Capabilities } from "../shared/types";
 
 app.setName("Telldo");
@@ -241,27 +247,79 @@ async function dispatch(method: string, args: any[]) {
     case "ask": {
       if (aiRunning || aiProbing) throw Error("Codex is busy. / Codex 正忙。");
       aiRunning = true;
+      const requestId =
+        typeof args[3] === "string" ? args[3].slice(0, 80) : undefined;
+      const chinese = (
+        settings().language === "system" ? app.getLocale() : settings().language
+      ).startsWith("zh");
+      const activities = new Map<string, AIActivity>();
+      const progress = (event: Exclude<AIProgress, string>) => {
+        if (event.type === "activity") activities.set(event.id, event);
+        send("progress", { ...event, requestId });
+      };
       try {
         const text = String(args[0]).trim();
         if (!text || text.length > 4000)
           throw Error("Please enter 1–4000 characters");
+        progress({
+          type: "activity",
+          id: "context",
+          phase: "context",
+          status: "running",
+          label: chinese ? "读取本地任务" : "Reading local tasks",
+        });
         const all = service.listTasks();
         const recurring = new Set(
           schedules.listRecurrences().map((r) => r.task_id),
         );
-        const tasks = all.filter(
-          (t) =>
-            !recurring.has(t.id) &&
-            (t.status === "todo" || text.includes(t.title)),
-        );
-        const relevant = tasks.filter(
-          (t) =>
-            text.includes(t.title) ||
-            (t.due_date && t.due_date < localDay(zone())),
-        );
+        const tasks = all.filter((t) => !recurring.has(t.id));
+        const relevant = tasks.filter((t) => text.includes(t.title));
         const chosen = [
-          ...new Map([...relevant, ...tasks].map((t) => [t.id, t])).values(),
-        ].slice(0, 30);
+          ...new Map(
+            [
+              ...relevant,
+              ...tasks.filter((t) => t.status === "todo"),
+              ...tasks,
+            ].map((t) => [t.id, t]),
+          ).values(),
+        ].slice(0, 100);
+        const from = localDay(zone());
+        const to = DateTime.fromISO(from, { zone: zone() })
+          .plus({ days: 30 })
+          .toISODate()!;
+        schedules.materializeRange(from, to, zone());
+        const series = schedules.listRecurrences();
+        const instances = schedules
+          .listOccurrences()
+          .filter((o) => o.status !== "skipped")
+          .flatMap((o) => {
+            const rule = series.find((r) => r.id === o.series_id);
+            const task = all.find((t) => t.id === rule?.task_id);
+            if (!rule || !task) return [];
+            const item = taskFromOccurrence(task, o, rule.tzid);
+            return item.due_date && item.due_date >= from && item.due_date <= to
+              ? [
+                  {
+                    title: item.title,
+                    list_id: item.list_id,
+                    status: item.status,
+                    due_date: item.due_date,
+                    due_at: item.due_at,
+                    time_zone: item.time_zone,
+                  },
+                ]
+              : [];
+          });
+        progress({
+          type: "activity",
+          id: "context",
+          phase: "context",
+          status: "completed",
+          label: chinese ? "已读取任务与日程" : "Tasks and schedule loaded",
+          detail: chinese
+            ? `${chosen.length} / ${tasks.length} 个任务 · ${Math.min(instances.length, 100)} / ${instances.length} 个重复日程（${from} — ${to}） · ${zone()}`
+            : `${chosen.length} / ${tasks.length} tasks · ${Math.min(instances.length, 100)} / ${instances.length} recurring events (${from} — ${to}) · ${zone()}`,
+        });
         const result = await adapter.run(
           text,
           {
@@ -269,48 +327,67 @@ async function dispatch(method: string, args: any[]) {
             timeZone: zone(),
             currentListId: args[1],
             lists: service.listLists().map(({ id, name }) => ({ id, name })),
-            tasks: chosen.map(
-              ({
-                id,
-                title,
-                version,
-                due_kind,
-                due_date,
-                due_at,
-                list_id,
-                status,
-                parent_id,
-                time_zone,
-              }) => ({
-                id,
-                title,
-                version,
-                due_kind,
-                due_date,
-                due_at,
-                list_id,
-                status,
-                parent_id,
-                time_zone,
-              }),
-            ),
+            tasks: chosen,
+            conversation: args[2],
+            inventory: {
+              ordinaryTotal: tasks.length,
+              ordinaryTodo: tasks.filter((t) => t.status === "todo").length,
+              ordinaryDone: tasks.filter((t) => t.status === "done").length,
+              ordinaryIncluded: chosen.length,
+              includesSubtasks: true,
+              recurringSeries: series.length,
+            },
+            readOnlySchedule: {
+              from,
+              to,
+              total: instances.length,
+              included: Math.min(instances.length, 100),
+              instances: instances.slice(0, 100),
+            },
           },
-          (progress) => send("progress", progress),
+          (event) => {
+            if (typeof event !== "string") progress(event);
+          },
         );
+        if (!result.proposal.actions.length) {
+          progress({
+            type: "activity",
+            id: "validation",
+            phase: "validation",
+            status: "completed",
+            label: chinese ? "回复已就绪" : "Response ready",
+            detail: chinese
+              ? "仅查询，未修改任务"
+              : "Read-only answer; no task changes",
+          });
+          return {
+            kind: "answer",
+            message: result.proposal.summary,
+            activities: [...activities.values()],
+          };
+        }
         const proposal = service.saveProposal(
           result.proposal,
           text,
           result.raw,
           chosen.map((t) => t.id),
         );
-        if (
-          !settings().alwaysConfirm &&
-          proposal.risk === "low" &&
-          proposal.actions.length === 1 &&
-          proposal.actions[0].type === "create"
-        )
-          service.applyProposal(proposal.id);
-        return proposal.id;
+        progress({
+          type: "activity",
+          id: "validation",
+          phase: "validation",
+          status: "completed",
+          label: chinese ? "提案已就绪" : "Proposal ready",
+          detail: chinese
+            ? `${result.proposal.actions.length} 项更改等待确认，尚未应用`
+            : `${result.proposal.actions.length} changes await your approval; nothing applied`,
+        });
+        return {
+          kind: "proposal",
+          message: proposal.summary,
+          proposalId: proposal.id,
+          activities: [...activities.values()],
+        };
       } finally {
         aiRunning = false;
       }

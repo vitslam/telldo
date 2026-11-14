@@ -53,6 +53,119 @@ def is_tool(value):
     return False
 
 
+
+class PublicProgress:
+    """Forward observable execution stages and answer summary only, never reasoning."""
+    LABELS = {"connection": "连接 Codex", "model": "处理请求", "response": "生成回复"}
+
+    def __init__(self):
+        self.states = {}
+        self.preview = ""
+        self.preview_count = 0
+
+    def activity(self, phase, status, detail=None):
+        if self.states.get(phase) == status:
+            return
+        self.states[phase] = status
+        event = dict(type="activity", id=phase, phase=phase, status=status, label=self.LABELS[phase])
+        if detail:
+            event["detail"] = detail[:240]
+        emit("progress", event=event)
+
+    def summary(self, raw, complete=False):
+        text = summary_prefix(raw)
+        if not text or text == self.preview or self.preview_count >= 100:
+            return
+        if not complete and len(text) - len(self.preview) < 24:
+            return
+        self.preview = text
+        self.preview_count += 1
+        emit("progress", event=dict(type="response", text=text))
+
+    def consume(self, event):
+        kind, item = event.get("type"), event.get("item", {})
+        if kind == "thread.started":
+            self.activity("connection", "completed")
+        elif kind == "turn.started":
+            self.activity("connection", "completed")
+            self.activity("model", "running")
+        if kind in ("item.started", "item.updated", "item.completed") and isinstance(item, dict) and item.get("type") == "agent_message":
+            self.activity("response", "running")
+            if isinstance(item.get("text"), str):
+                self.summary(item["text"], kind == "item.completed")
+            if kind == "item.completed":
+                self.activity("response", "completed")
+        if kind == "turn.completed":
+            self.activity("model", "completed")
+
+
+def summary_prefix(raw):
+    """Read a safe prefix of the top-level summary JSON string, ignoring other fields."""
+    text = raw.lstrip()
+    if not text.startswith("{"):
+        return ""
+
+    def string_at(start):
+        value, index = [], start + 1
+        escapes = {'"': '"', '\\': '\\', '/': '/', 'n': '\n', 'r': '\r', 't': '\t', 'b': '\b', 'f': '\f'}
+        while index < len(text):
+            ch = text[index]
+            if ch == '"':
+                return ''.join(value), index + 1, True
+            if ch == '\\':
+                index += 1
+                if index >= len(text):
+                    break
+                ch = text[index]
+                if ch == 'u':
+                    hex_value = text[index + 1:index + 5]
+                    if not re.fullmatch(r'[0-9a-fA-F]{4}', hex_value):
+                        break
+                    value.append(chr(int(hex_value, 16)))
+                    index += 4
+                elif ch in escapes:
+                    value.append(escapes[ch])
+                else:
+                    break
+            elif ord(ch) < 32:
+                break
+            else:
+                value.append(ch)
+            index += 1
+        return ''.join(value), index, False
+
+    depth, index = 0, 0
+    while index < len(text):
+        ch = text[index]
+        if ch == '"':
+            token, end, closed = string_at(index)
+            if not closed:
+                return ""
+            index = end - 1
+            if depth == 1 and token == 'summary':
+                cursor = end
+                while cursor < len(text) and text[cursor].isspace():
+                    cursor += 1
+                if cursor >= len(text) or text[cursor] != ':':
+                    index += 1
+                    continue
+                cursor += 1
+                while cursor < len(text) and text[cursor].isspace():
+                    cursor += 1
+                if cursor >= len(text) or text[cursor] != '"':
+                    return ""
+                value = string_at(cursor)[0]
+                # Combine escaped surrogate pairs and discard incomplete trailing ones.
+                value = value.encode('utf-16', 'surrogatepass').decode('utf-16', 'ignore')
+                return re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', '', value)[:2000]
+        elif ch in '{[':
+            depth += 1
+        elif ch in '}]':
+            depth -= 1
+        index += 1
+    return ""
+
+
 class Runtime:
     def __init__(self, request):
         timeout = request.get("timeoutMs", 120000)
@@ -228,6 +341,8 @@ class Runtime:
             args.extend(["--output-last-message", str(final_path)])
         args.append("-")
         last_message = [None]
+        progress = PublicProgress()
+        progress.activity("connection", "completed", "远端 Codex 已就绪")
         def line(text):
             try:
                 event = json.loads(text)
@@ -242,7 +357,7 @@ class Runtime:
             item = event.get("item", {})
             if event.get("type") == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
                 last_message[0] = item.get("text")
-            emit("progress", message="Codex: " + str(event.get("type", "event"))[:100])
+            progress.consume(event)
         code, _, error = self.collect(self.spawn(args, str(workdir)), prompt.encode("utf-8"), on_line=line)
         if code:
             raise friendly(error)
@@ -260,6 +375,7 @@ class Runtime:
         if not isinstance(proposal, dict):
             raise RunnerError("Codex final response must be a strict JSON object", "invalid_output")
         self.check()
+        progress.summary(raw, complete=True)
         emit("proposal", raw=raw)
 
 

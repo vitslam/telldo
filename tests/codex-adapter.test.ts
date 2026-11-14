@@ -244,7 +244,7 @@ describe("Codex adapter capability probing and process boundary", () => {
       timeZone: "Europe/Paris",
       today: "2026-11-14",
       lists: [{ id: "work", name: "Work" }],
-      tasks: Array.from({ length: 100 }, (_, i) => ({
+      tasks: Array.from({ length: 120 }, (_, i) => ({
         id: String(i),
         title: "Task",
         version: 1,
@@ -265,7 +265,7 @@ describe("Codex adapter capability probing and process boundary", () => {
     expect(call.args.at(-1)).toBe("-");
     expect(call.input).not.toContain("should-not-send");
     expect(call.input).not.toContain("/secret/db");
-    expect(call.input).not.toContain('"id":"30"');
+    expect(call.input).not.toContain('"id":"100"');
   });
   it("normalizes strict wire patches before returning a proposal", async () => {
     const { adapter } = await ready({ scenario: "wire" });
@@ -276,9 +276,9 @@ describe("Codex adapter capability probing and process boundary", () => {
   });
   it("returns clarification without an applicable proposal", async () => {
     const { adapter } = await ready({ scenario: "clarify" });
-    await expect(adapter.run("task", {})).rejects.toThrow(
-      "Which list should I use?",
-    );
+    const result = await adapter.run("task", {});
+    expect(result.proposal.actions).toEqual([]);
+    expect(result.proposal.summary).toBe("Which list should I use?");
   });
   it("falls back without schema and output-file flags, preserving fragmented UTF-8", async () => {
     const { adapter, calls } = await ready({

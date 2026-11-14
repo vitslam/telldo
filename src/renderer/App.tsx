@@ -1,3 +1,6 @@
+import ChatPage, { type ConversationMessage } from "./ChatPage";
+import type { AIProgress } from "../shared/ai-progress";
+import type { ChatReply } from "../shared/conversation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import PlannedView from "./PlannedView";
 import { applyAppearance } from "./appearance";
@@ -23,6 +26,7 @@ import {
   Bell,
   Trash2,
   LoaderCircle,
+  SquarePen,
 } from "lucide-react";
 import type {
   Snapshot,
@@ -70,6 +74,7 @@ const zh: Record<string, string> = {
   "Follow system": "跟随系统",
   "Display mode": "显示模式",
   "Preview instantly. Save to keep your choice.": "选择即可预览，保存后生效。",
+  Conversation: "AI 对话",
   Today: "今天",
   Planned: "计划",
   Anytime: "随时",
@@ -77,7 +82,8 @@ const zh: Record<string, string> = {
   "New list": "新建清单",
   Settings: "设置",
   "Search tasks, notes, tags…": "搜索任务、备注和标签…",
-  "Tell Telldo what’s on your mind…": "跟 Telldo 说，你想做什么…",
+  "Ask about your tasks, or tell Telldo what to do…":
+    "跟 Telldo 说，你想做什么…",
   "Add a task… e.g. 明天下午交周报": "添加任务，例如：明天下午交周报",
   "Add task": "添加任务",
   "All done for now": "暂时没有待办",
@@ -277,13 +283,12 @@ function Modal({
 }
 export default function App() {
   const [data, setData] = useState<Snapshot | null>(null),
-    [view, setView] = useState("today"),
+    [view, setView] = useState("assistant"),
     [search, setSearch] = useState(""),
     [selected, setSelected] = useState<string | null>(null),
     [newTask, setNewTask] = useState(""),
     [speech, setSpeech] = useState(""),
     [busy, setBusy] = useState(false),
-    [progress, setProgress] = useState(""),
     [error, setError] = useState(""),
     [toast, setToast] = useState(""),
     [settingsOpen, setSettingsOpen] = useState(false),
@@ -297,6 +302,11 @@ export default function App() {
       message: string;
       run: () => Promise<unknown>;
     } | null>(null);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [cancelling, setCancelling] = useState(false);
+  const activeRequest = useRef<string | null>(null);
+  const cancelledRequest = useRef<string | null>(null);
+  const asking = useRef(false);
   const [planMonth, setPlanMonth] = useState(() =>
     DateTime.local().toFormat("yyyy-MM"),
   );
@@ -315,7 +325,10 @@ export default function App() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
-        speechInput.current?.focus();
+        setView("assistant");
+        setSearch("");
+        setSelected(null);
+        requestAnimationFrame(() => speechInput.current?.focus());
       }
       if (
         event.key === "Escape" &&
@@ -375,12 +388,36 @@ export default function App() {
     return window.telldo.onEvent((event) => {
       if (event.type === "changed") void reload();
       if (event.type === "select") setSelected(String(event.data));
-      if (event.type === "progress")
-        setProgress(
-          typeof event.data === "string"
-            ? event.data
-            : JSON.stringify(event.data),
+      if (event.type === "progress") {
+        const progress = event.data as Exclude<AIProgress, string> & {
+          requestId?: string;
+        };
+        if (
+          !progress ||
+          typeof progress !== "object" ||
+          progress.requestId !== activeRequest.current
+        )
+          return;
+        setMessages((items) =>
+          items.map((message) => {
+            if (
+              message.id !== progress.requestId ||
+              message.state !== "working"
+            )
+              return message;
+            if (progress.type === "response")
+              return { ...message, content: progress.text };
+            if (progress.type !== "activity") return message;
+            const activities = [...(message.activities || [])];
+            const index = activities.findIndex(
+              (item) => item.id === progress.id,
+            );
+            if (index >= 0) activities[index] = progress;
+            else activities.push(progress);
+            return { ...message, activities };
+          }),
         );
+      }
     });
   }, []);
   useEffect(() => {
@@ -463,20 +500,120 @@ export default function App() {
       setNewTask("");
     });
   }
+  function openConversation() {
+    setView("assistant");
+    setSearch("");
+    setSelected(null);
+    requestAnimationFrame(() => speechInput.current?.focus());
+  }
+  async function cancelConversation() {
+    if (!activeRequest.current || cancelling) return;
+    cancelledRequest.current = activeRequest.current;
+    setCancelling(true);
+    try {
+      await api("cancelAI");
+    } catch (e) {
+      setError(String(e));
+      setCancelling(false);
+      cancelledRequest.current = null;
+    }
+  }
   async function ask() {
-    if (!speech.trim()) return;
+    const request = speech.trim();
+    if (!request || asking.current) return;
+    asking.current = true;
+    const requestId = crypto.randomUUID();
+    activeRequest.current = requestId;
+    cancelledRequest.current = null;
     setBusy(true);
-    setProgress("");
-    await act(async () => {
-      const id = await api<string>(
+    setCancelling(false);
+    setSpeech("");
+    const excludedTurns = new Set(
+      messages
+        .filter((m) => m.error || m.state === "cancelled")
+        .map((m) => m.turnId || m.id),
+    );
+    const history = messages
+      .filter((m) => !excludedTurns.has(m.turnId || m.id) && m.content)
+      .slice(-12)
+      .map((m) => ({
+        role: m.role,
+        content:
+          m.content +
+          (m.proposalId
+            ? `\n[Proposal status: ${data?.proposals.find((p) => p.id === m.proposalId)?.status || "unknown"}]`
+            : ""),
+      }));
+    setMessages((items) => [
+      ...items,
+      {
+        id: crypto.randomUUID(),
+        turnId: requestId,
+        role: "user",
+        content: request,
+      },
+      {
+        id: requestId,
+        turnId: requestId,
+        role: "assistant",
+        content: "",
+        state: "working",
+        startedAt: Date.now(),
+        activities: [],
+      },
+    ]);
+    try {
+      const reply = await api<ChatReply>(
         "ask",
-        speech,
-        currentList?.id || lists[0]?.id,
+        request,
+        lists[0]?.id,
+        history,
+        requestId,
       );
-      setProposalId(id);
-      setSpeech("");
-    });
-    setBusy(false);
+      setMessages((items) =>
+        items.map((message) =>
+          message.id === requestId
+            ? {
+                ...message,
+                content: reply.message,
+                proposalId: reply.proposalId,
+                activities: reply.activities || message.activities,
+                state: "completed",
+                finishedAt: Date.now(),
+              }
+            : message,
+        ),
+      );
+      void reload().catch((e) => setError(String(e)));
+    } catch (e) {
+      const cancelled = cancelledRequest.current === requestId;
+      const content = cancelled
+        ? isZh
+          ? "已停止本次回复。任务未作更改。"
+          : "Response stopped. Your tasks haven't changed."
+        : String(e)
+            .replace(/^Error: /, "")
+            .replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
+      setMessages((items) =>
+        items.map((message) =>
+          message.id === requestId
+            ? {
+                ...message,
+                notice: content,
+                error: !cancelled,
+                state: cancelled ? "cancelled" : "error",
+                finishedAt: Date.now(),
+              }
+            : message,
+        ),
+      );
+      if (!cancelled) setSpeech((draft) => draft || request);
+    } finally {
+      activeRequest.current = null;
+      asking.current = false;
+      setBusy(false);
+      setCancelling(false);
+    }
   }
   const dateLabel = (item: Task) => {
     const date =
@@ -520,17 +657,24 @@ export default function App() {
         <LoaderCircle className="spin" />
       </div>
     );
+  const isConversation = view === "assistant" && !search;
   return (
     <div
-      className={`app-shell ${view === "planned" && !search ? "planned-shell" : ""}`}
+      className={`app-shell ${isConversation ? "conversation-shell" : ""} ${view === "planned" && !search ? "planned-shell" : ""}`}
     >
       <aside className="sidebar">
-        <div className="brand">
+        <button
+          className="brand"
+          onClick={openConversation}
+          aria-label={isZh ? "Telldo · AI 对话首页" : "Telldo · AI home"}
+          title={isZh ? "回到 AI 对话 · ⌘ J" : "Open AI conversation · ⌘ J"}
+        >
           <div className="brand-mark">t.</div>
           <span>Telldo</span>
-        </div>
+        </button>
         <nav>
           {[
+            ["assistant", "Conversation", Sparkles],
             ["today", "Today", Sun],
             ["planned", "Planned", CalendarDays],
             ["anytime", "Anytime", Layers],
@@ -543,11 +687,15 @@ export default function App() {
                 onClick={() => {
                   setView(String(id));
                   setSearch("");
+                  setSelected(null);
                 }}
               >
                 <I size={18} />
                 <span>{t(String(label))}</span>
-                {id !== "planned" && (
+                {id === "assistant" && busy && (
+                  <LoaderCircle size={13} className="spin nav-working" />
+                )}
+                {id !== "planned" && id !== "assistant" && (
                   <small>
                     {
                       allRows.filter(
@@ -610,21 +758,42 @@ export default function App() {
       <main>
         <header className="topbar">
           <div className="breadcrumb">
-            {isZh ? "我的空间" : "My workspace"}
+            {isConversation ? "Telldo" : isZh ? "我的空间" : "My workspace"}
             <span>/</span>
             <strong>
-              {search
-                ? t("Search tasks, notes, tags…")
-                : currentList?.name ||
-                  t(
-                    view === "today"
-                      ? "Today"
-                      : view === "planned"
-                        ? "Planned"
-                        : "Anytime",
-                  )}
+              {isConversation
+                ? t("Conversation")
+                : search
+                  ? t("Search tasks, notes, tags…")
+                  : currentList?.name ||
+                    t(
+                      view === "today"
+                        ? "Today"
+                        : view === "planned"
+                          ? "Planned"
+                          : "Anytime",
+                    )}
             </strong>
           </div>
+          {isConversation && (
+            <button
+              className="new-conversation"
+              disabled={busy || !messages.length}
+              onClick={() => {
+                setMessages([]);
+                setSpeech("");
+                speechInput.current?.focus();
+              }}
+              title={
+                isZh
+                  ? "开始新对话，保留任务和提案"
+                  : "Start fresh; tasks and proposals are kept"
+              }
+            >
+              <SquarePen size={15} />
+              <span>{isZh ? "新对话" : "New chat"}</span>
+            </button>
+          )}
           <label className="search">
             <Search size={17} />
             <input
@@ -645,397 +814,322 @@ export default function App() {
             {!search && <kbd>⌘ K</kbd>}
           </label>
         </header>
-        <div className="content">
-          <div className="view-heading">
-            <div className="eyebrow">
-              {new Intl.DateTimeFormat(isZh ? "zh-CN" : "en", {
-                timeZone: zone,
-                month: "long",
-                day: "numeric",
-                weekday: "long",
-              }).format(new Date())}
-            </div>
-            <div className="heading-line">
-              <h1>
-                {search
-                  ? `${isZh ? "搜索" : "Search"} · ${search}`
-                  : currentList?.name ||
-                    t(
-                      view === "today"
-                        ? "Today"
-                        : view === "planned"
-                          ? "Planned"
-                          : "Anytime",
-                    )}
-              </h1>
-              {currentList && (
-                <div className="heading-actions">
-                  <button
-                    title={t("Rename list")}
-                    onClick={() =>
-                      setListDialog({
-                        id: currentList.id,
-                        name: currentList.name,
-                      })
-                    }
-                  >
-                    <MoreHorizontal size={20} />
-                  </button>
-                  <button
-                    title={t("Delete list")}
-                    onClick={() =>
-                      setConfirm({
-                        message: t("Delete this list and its tasks?"),
-                        run: async () => {
-                          await api("deleteList", currentList.id);
-                          setView("today");
-                        },
-                      })
-                    }
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              )}
-            </div>
-            <p className="view-description">
-              {search
-                ? isZh
-                  ? "找到你想做的那件事。"
-                  : "Find what matters."
-                : view === "today"
-                  ? isZh
-                    ? "留一点空间，专注重要的事。"
-                    : "A little space for what matters."
-                  : view === "planned"
-                    ? isZh
-                      ? "把想做的事，放进日子里。"
-                      : "Give your plans a place in time."
-                    : isZh
-                      ? "收好每一个想法，按自己的节奏来。"
-                      : "Good ideas, at your own pace."}
-            </p>
-          </div>
+        <div className="conversation-page-slot" hidden={!isConversation}>
           {error && (
-            <div role="alert" className="error global-error">
+            <div role="alert" className="error conversation-global-error">
               <span>{error}</span>
-              <button onClick={() => setError("")}>
+              <button onClick={() => setError("")} aria-label={t("Close")}>
                 <X size={16} />
               </button>
             </div>
           )}
-          {pending.length > 0 && (
-            <button
-              className="proposal-banner"
-              onClick={() => setProposalId(pending[0].id)}
-            >
-              <Sparkles size={17} />
-              {t("Pending proposals")} · {pending.length}
-              <ArrowRight size={16} />
-            </button>
-          )}
-          {lastApplied && (
-            <div className="undo-bar">
-              <Check size={14} />
-              {lastApplied.summary}
-              <button
-                onClick={() =>
-                  void act(() => api("undoProposal", lastApplied.id), "Saved")
-                }
-              >
-                <Undo2 size={14} />
-                {t("Undo")}
-              </button>
-            </div>
-          )}
-          {view === "planned" && (
-            <div className="planned-container" hidden={!!search}>
-              <PlannedView
-                data={data}
-                zone={zone}
-                isZh={isZh}
-                month={planMonth}
-                setMonth={setPlanMonth}
-                showDone={showDone}
-                setShowDone={setShowDone}
-                reload={reload}
-                openTemplate={(item) => {
-                  setView(item.list_id);
-                  setSelected(item.id);
-                }}
-                renderDetails={(item, dates, close) => (
-                  <TaskDetail
-                    key={item.id + ":" + item.version}
-                    task={item}
-                    data={data}
-                    zone={zone}
-                    t={t}
-                    close={close}
-                    act={act}
-                    calendarDates={dates}
-                    selectTask={(id) => {
-                      setView(item.list_id);
-                      setSelected(id);
-                    }}
-                    requestDelete={() =>
-                      setConfirm({
-                        message: t("Delete this task and its subtasks?"),
-                        run: async () => {
-                          await api("deleteTask", item.id, item.version);
-                          close();
-                        },
-                      })
-                    }
-                  />
-                )}
-              />
-            </div>
-          )}
-          {!(view === "planned" && !search) && (
-            <>
-              <div className="task-toolbar">
-                <span>
-                  {t("To do")}
-                  <span className="count-pill">{rows.length}</span>
-                </span>
-                <button onClick={() => setShowDone(!showDone)}>
-                  {t(showDone ? "Hide completed" : "Show completed")}
-                </button>
+          <ChatPage
+            visible={isConversation}
+            messages={messages}
+            busy={busy}
+            cancelling={cancelling}
+            isZh={isZh}
+            proposals={data.proposals}
+            speech={speech}
+            setSpeech={setSpeech}
+            inputRef={speechInput}
+            available={!!data.capabilities?.available}
+            connectionReason={data.capabilities?.reason}
+            review={setProposalId}
+            send={() => void ask()}
+            cancel={() => void cancelConversation()}
+            settings={() => setSettingsOpen(true)}
+          />
+        </div>
+        {!isConversation && (
+          <div className="content">
+            <div className="view-heading">
+              <div className="eyebrow">
+                {new Intl.DateTimeFormat(isZh ? "zh-CN" : "en", {
+                  timeZone: zone,
+                  month: "long",
+                  day: "numeric",
+                  weekday: "long",
+                }).format(new Date())}
               </div>
-              <div className="quick-add">
-                <Plus size={20} />
-                <input
-                  aria-label="New task"
-                  placeholder={isZh ? "手动添加任务…" : "Add a task manually…"}
-                  value={newTask}
-                  onChange={(e) => setNewTask(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void addTask();
-                  }}
-                />
-                <button
-                  disabled={!newTask.trim() || !lists.length}
-                  onClick={() => void addTask()}
-                >
-                  {t("Add task")}
-                  <span>↵</span>
-                </button>
-              </div>
-              <div className="task-list">
-                {rows.length ? (
-                  rows.map(({ task: item, occurrence, template }) => (
-                    <div
-                      key={item.id + (occurrence?.occurrence_key || "")}
-                      className={`task-row ${selected === item.id ? "selected" : ""} ${item.status === "done" ? "completed" : ""}`}
+              <div className="heading-line">
+                <h1>
+                  {search
+                    ? `${isZh ? "搜索" : "Search"} · ${search}`
+                    : currentList?.name ||
+                      t(
+                        view === "today"
+                          ? "Today"
+                          : view === "planned"
+                            ? "Planned"
+                            : "Anytime",
+                      )}
+                </h1>
+                {currentList && (
+                  <div className="heading-actions">
+                    <button
+                      title={t("Rename list")}
+                      onClick={() =>
+                        setListDialog({
+                          id: currentList.id,
+                          name: currentList.name,
+                        })
+                      }
                     >
-                      <button
-                        className={`check-button ${item.priority} ${item.status === "done" ? "checked" : ""}`}
-                        disabled={template}
-                        aria-label={`${item.status === "done" ? t("Reopen") : t("Completed")} ${item.title}`}
-                        onClick={() =>
-                          void act(() =>
-                            occurrence
-                              ? api(
-                                  "updateOccurrence",
-                                  occurrence.series_id,
-                                  occurrence.occurrence_key,
-                                  {
-                                    status:
-                                      item.status === "done" ? "todo" : "done",
-                                  },
-                                  occurrence.version ?? 1,
-                                )
-                              : api("updateTask", item.id, item.version, {
-                                  status:
-                                    item.status === "done" ? "todo" : "done",
-                                }),
-                          )
-                        }
-                      >
-                        {item.status === "done" && <Check size={13} />}
-                      </button>
-                      <button
-                        className="task-body"
-                        onClick={() => setSelected(item.id)}
-                      >
-                        <span className="task-title">
-                          {item.title}
-                          {template && (
-                            <span className="pill">
-                              {t("Recurring template")}
-                            </span>
-                          )}
-                          {occurrence && <Repeat2 size={13} />}
-                        </span>
-                        <span className="task-meta">
-                          {!currentList && (
-                            <span>
-                              {lists.find((l) => l.id === item.list_id)?.name}
-                            </span>
-                          )}
-                          {item.tags.map((tag) => (
-                            <span className="tag" key={tag}>
-                              #{tag}
-                            </span>
-                          ))}
-                          {tasks.some((t) => t.parent_id === item.id) && (
-                            <span>
-                              <ListChecks size={12} />
-                              {
-                                tasks.filter(
-                                  (t) =>
-                                    t.parent_id === item.id &&
-                                    t.status === "done",
-                                ).length
-                              }
-                              /
-                              {
-                                tasks.filter((t) => t.parent_id === item.id)
-                                  .length
-                              }
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                      <span
-                        className={`task-date ${isOverdue(item, zone) && item.status === "todo" ? "overdue" : ""}`}
-                      >
-                        {item.reminder_at && <Bell size={12} />}{" "}
-                        {dateLabel(item)}
-                      </span>
-                      <span className={`priority-dot ${item.priority}`} />
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty">
-                    <div className="empty-art">
-                      <div className="paper">
-                        <span />
-                        <span />
-                        <span />
-                        <Check size={23} />
-                      </div>
-                      <span className="orbit one" />
-                      <span className="orbit two" />
-                    </div>
-                    <h3>{t("All done for now")}</h3>
-                    <p>{t("A little space for your next idea.")}</p>
+                      <MoreHorizontal size={20} />
+                    </button>
+                    <button
+                      title={t("Delete list")}
+                      onClick={() =>
+                        setConfirm({
+                          message: t("Delete this list and its tasks?"),
+                          run: async () => {
+                            await api("deleteList", currentList.id);
+                            setView("today");
+                          },
+                        })
+                      }
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                 )}
               </div>
-            </>
-          )}
-        </div>
-        <div className="assistant-dock">
-          <section
-            id="ai-composer"
-            className={`ai-composer ${busy ? "is-working" : ""}`}
-            aria-label={isZh ? "告诉 Telldo" : "Tell Telldo"}
-          >
-            <div className="ai-bar">
-              <Sparkles
-                className="composer-icon"
-                size={19}
-                aria-hidden="true"
-              />
-              <textarea
-                ref={speechInput}
-                aria-label="Tell Telldo"
-                rows={1}
-                value={speech}
-                onChange={(e) => setSpeech(e.target.value)}
-                placeholder={
-                  isZh
-                    ? "告诉 Telldo，你想做什么…"
-                    : "Tell Telldo what’s on your mind…"
-                }
-                disabled={busy}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !e.nativeEvent.isComposing
-                  ) {
-                    e.preventDefault();
-                    if (data.capabilities?.available && !busy) void ask();
+              <p className="view-description">
+                {search
+                  ? isZh
+                    ? "找到你想做的那件事。"
+                    : "Find what matters."
+                  : view === "today"
+                    ? isZh
+                      ? "留一点空间，专注重要的事。"
+                      : "A little space for what matters."
+                    : view === "planned"
+                      ? isZh
+                        ? "把想做的事，放进日子里。"
+                        : "Give your plans a place in time."
+                      : isZh
+                        ? "收好每一个想法，按自己的节奏来。"
+                        : "Good ideas, at your own pace."}
+              </p>
+            </div>
+            {error && (
+              <div role="alert" className="error global-error">
+                <span>{error}</span>
+                <button onClick={() => setError("")}>
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+            {pending.length > 0 && (
+              <button
+                className="proposal-banner"
+                onClick={() => setProposalId(pending[0].id)}
+              >
+                <Sparkles size={17} />
+                {t("Pending proposals")} · {pending.length}
+                <ArrowRight size={16} />
+              </button>
+            )}
+            {lastApplied && (
+              <div className="undo-bar">
+                <Check size={14} />
+                {lastApplied.summary}
+                <button
+                  onClick={() =>
+                    void act(() => api("undoProposal", lastApplied.id), "Saved")
                   }
-                }}
-              />
-              <kbd className="composer-shortcut" title="⌘ J">
-                ⌘ J
-              </kbd>
-              {busy ? (
-                <button
-                  className="ai-cancel"
-                  onClick={() => void act(() => api("cancelAI"))}
                 >
-                  {t("Cancel")}
+                  <Undo2 size={14} />
+                  {t("Undo")}
                 </button>
-              ) : (
-                <button
-                  className="ai-submit"
-                  aria-label="Send to Codex"
-                  disabled={!data.capabilities?.available || !speech.trim()}
-                  onClick={() => void ask()}
-                >
-                  <ArrowRight size={20} />
-                </button>
-              )}
-            </div>
-            <div className="assistant-bottom">
-              <div
-                className="assistant-examples"
-                aria-label={isZh ? "试试这样说" : "Try saying"}
-              >
-                {(isZh
-                  ? ["明天下午3点交周报", "每周五整理本周笔记"]
-                  : [
-                      "Send the update tomorrow at 3pm",
-                      "Review my notes every Friday",
-                    ]
-                ).map((example) => (
-                  <button
-                    key={example}
-                    disabled={busy}
-                    onClick={() => {
-                      setSpeech(example);
-                      speechInput.current?.focus();
+              </div>
+            )}
+            {view === "planned" && (
+              <div className="planned-container" hidden={!!search}>
+                <PlannedView
+                  data={data}
+                  zone={zone}
+                  isZh={isZh}
+                  month={planMonth}
+                  setMonth={setPlanMonth}
+                  showDone={showDone}
+                  setShowDone={setShowDone}
+                  reload={reload}
+                  openTemplate={(item) => {
+                    setView(item.list_id);
+                    setSelected(item.id);
+                  }}
+                  renderDetails={(item, dates, close) => (
+                    <TaskDetail
+                      key={item.id + ":" + item.version}
+                      task={item}
+                      data={data}
+                      zone={zone}
+                      t={t}
+                      close={close}
+                      act={act}
+                      calendarDates={dates}
+                      selectTask={(id) => {
+                        setView(item.list_id);
+                        setSelected(id);
+                      }}
+                      requestDelete={() =>
+                        setConfirm({
+                          message: t("Delete this task and its subtasks?"),
+                          run: async () => {
+                            await api("deleteTask", item.id, item.version);
+                            close();
+                          },
+                        })
+                      }
+                    />
+                  )}
+                />
+              </div>
+            )}
+            {!(view === "planned" && !search) && (
+              <>
+                <div className="task-toolbar">
+                  <span>
+                    {t("To do")}
+                    <span className="count-pill">{rows.length}</span>
+                  </span>
+                  <button onClick={() => setShowDone(!showDone)}>
+                    {t(showDone ? "Hide completed" : "Show completed")}
+                  </button>
+                </div>
+                <div className="quick-add">
+                  <Plus size={20} />
+                  <input
+                    aria-label="New task"
+                    placeholder={
+                      isZh ? "手动添加任务…" : "Add a task manually…"
+                    }
+                    value={newTask}
+                    onChange={(e) => setNewTask(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void addTask();
                     }}
-                  >
-                    {example}
-                    <ArrowUpRight size={12} />
-                  </button>
-                ))}
-              </div>
-              <div
-                className="ai-caption"
-                aria-live="polite"
-                hidden={!busy && !!data.capabilities?.available}
-              >
-                {busy ? (
-                  <>
-                    <LoaderCircle size={12} className="spin" />
-                    {t("Working…")}
-                    <span className="ai-progress" title={progress}>
-                      {progress.slice(0, 80)}
-                    </span>
-                  </>
-                ) : !data.capabilities?.available ? (
+                  />
                   <button
-                    className="connection-action"
-                    onClick={() => setSettingsOpen(true)}
-                    title={data.capabilities?.reason}
+                    disabled={!newTask.trim() || !lists.length}
+                    onClick={() => void addTask()}
                   >
-                    {isZh ? "连接 Codex" : "Connect Codex"}
-                    <ArrowUpRight size={12} />
+                    {t("Add task")}
+                    <span>↵</span>
                   </button>
-                ) : null}
-              </div>
-            </div>
-          </section>
-        </div>
+                </div>
+                <div className="task-list">
+                  {rows.length ? (
+                    rows.map(({ task: item, occurrence, template }) => (
+                      <div
+                        key={item.id + (occurrence?.occurrence_key || "")}
+                        className={`task-row ${selected === item.id ? "selected" : ""} ${item.status === "done" ? "completed" : ""}`}
+                      >
+                        <button
+                          className={`check-button ${item.priority} ${item.status === "done" ? "checked" : ""}`}
+                          disabled={template}
+                          aria-label={`${item.status === "done" ? t("Reopen") : t("Completed")} ${item.title}`}
+                          onClick={() =>
+                            void act(() =>
+                              occurrence
+                                ? api(
+                                    "updateOccurrence",
+                                    occurrence.series_id,
+                                    occurrence.occurrence_key,
+                                    {
+                                      status:
+                                        item.status === "done"
+                                          ? "todo"
+                                          : "done",
+                                    },
+                                    occurrence.version ?? 1,
+                                  )
+                                : api("updateTask", item.id, item.version, {
+                                    status:
+                                      item.status === "done" ? "todo" : "done",
+                                  }),
+                            )
+                          }
+                        >
+                          {item.status === "done" && <Check size={13} />}
+                        </button>
+                        <button
+                          className="task-body"
+                          onClick={() => setSelected(item.id)}
+                        >
+                          <span className="task-title">
+                            {item.title}
+                            {template && (
+                              <span className="pill">
+                                {t("Recurring template")}
+                              </span>
+                            )}
+                            {occurrence && <Repeat2 size={13} />}
+                          </span>
+                          <span className="task-meta">
+                            {!currentList && (
+                              <span>
+                                {lists.find((l) => l.id === item.list_id)?.name}
+                              </span>
+                            )}
+                            {item.tags.map((tag) => (
+                              <span className="tag" key={tag}>
+                                #{tag}
+                              </span>
+                            ))}
+                            {tasks.some((t) => t.parent_id === item.id) && (
+                              <span>
+                                <ListChecks size={12} />
+                                {
+                                  tasks.filter(
+                                    (t) =>
+                                      t.parent_id === item.id &&
+                                      t.status === "done",
+                                  ).length
+                                }
+                                /
+                                {
+                                  tasks.filter((t) => t.parent_id === item.id)
+                                    .length
+                                }
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                        <span
+                          className={`task-date ${isOverdue(item, zone) && item.status === "todo" ? "overdue" : ""}`}
+                        >
+                          {item.reminder_at && <Bell size={12} />}{" "}
+                          {dateLabel(item)}
+                        </span>
+                        <span className={`priority-dot ${item.priority}`} />
+                      </div>
+                    ))
+                  ) : (
+                    <div className="empty">
+                      <div className="empty-art">
+                        <div className="paper">
+                          <span />
+                          <span />
+                          <span />
+                          <Check size={23} />
+                        </div>
+                        <span className="orbit one" />
+                        <span className="orbit two" />
+                      </div>
+                      <h3>{t("All done for now")}</h3>
+                      <p>{t("A little space for your next idea.")}</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </main>
-      {task && !(view === "planned" && !search) && (
+      {task && !isConversation && !(view === "planned" && !search) && (
         <TaskDetail
           key={task.id + ":" + task.version}
           task={task}
@@ -2022,16 +2116,6 @@ function SettingsDialog({
                 )}
               </p>
             </div>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={draft.alwaysConfirm}
-                onChange={(e) =>
-                  setDraft({ ...draft, alwaysConfirm: e.target.checked })
-                }
-              />
-              {t("Always confirm AI changes")}
-            </label>
           </div>
           <div className="settings-page" hidden={section !== "data"}>
             <h3>{t("Data management")}</h3>

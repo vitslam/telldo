@@ -168,3 +168,18 @@ export function parseProposal(value: unknown): ProposalInput {
     result.risk = "high";
   return result;
 }
+
+// An answer is validated separately; it can never enter the mutation pipeline.
+export function parseAIResponse(value: unknown): ProposalInput {
+  if (
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as any).actions) &&
+    (value as any).actions.length === 0
+  ) {
+    return proposalSchema
+      .extend({ actions: z.array(z.never()).length(0) })
+      .parse(value);
+  }
+  return parseProposal(value);
+}

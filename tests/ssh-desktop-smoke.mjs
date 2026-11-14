@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 const executablePath = process.env.TELLDO_EXECUTABLE;
-for (const key of ["TELLDO_SSH_HOST", "TELLDO_SSH_USER", "TELLDO_SSH_RUNNER_PATH"]) { if (!process.env[key]) throw Error(`Set ${key} for the explicit opt-in live SSH test`); }
+for (const key of [
+  "TELLDO_SSH_HOST",
+  "TELLDO_SSH_USER",
+  "TELLDO_SSH_RUNNER_PATH",
+]) {
+  if (!process.env[key])
+    throw Error(`Set ${key} for the explicit opt-in live SSH test`);
+}
 if (!executablePath)
   throw Error("Set TELLDO_EXECUTABLE to the packaged desktop executable");
 const dir = await mkdtemp(join(tmpdir(), "telldo-ssh-desktop-"));
@@ -54,7 +61,15 @@ try {
     list_id: list.id,
   });
   const start = Date.now();
-  const proposalId = await invoke("ask", "明天下午交周报", list.id);
+  const reply = await invoke("ask", "明天下午交周报", list.id);
+  assert.equal(reply.kind, "proposal");
+  const proposalId = reply.proposalId;
+  assert.equal(
+    (await invoke("snapshot")).tasks.length,
+    1,
+    "Proposed changes need confirmation",
+  );
+  await invoke("applyProposal", proposalId);
   snapshot = await invoke("snapshot");
   const created = snapshot.tasks.find((t) => t.id !== manual.id);
   assert.ok(created, "AI must create a task via Mac TaskService");
