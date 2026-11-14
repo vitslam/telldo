@@ -1,0 +1,10 @@
+node_modules/
+out/
+release/
+*.db
+*.db-*
+.DS_Store
+coverage/
+artifacts/
+
+.tools/
