@@ -1,7 +1,72 @@
 {
-  "name": "telldo", "productName": "Telldo", "version": "0.1.0", "description": "Say it. Get it on your list. Local-first personal tasks.", "author": "Telldo contributors", "license": "MIT", "private": true, "main": "out/main/index.js",
-  "scripts": {"dev":"electron-vite dev", "build":"npm run typecheck && electron-vite build", "typecheck":"tsc --noEmit", "test":"vitest run", "test:watch":"vitest", "postinstall":"electron-builder install-app-deps", "package:mac":"npm run build && electron-builder --mac --dir", "dist:mac":"npm run build && electron-builder --mac zip", "test:smoke":"node tests/smoke.mjs"},
-  "dependencies": {"better-sqlite3":"^12.4.1", "luxon":"^3.7.2", "rrule":"^2.8.1", "zod":"^4.1.12", "react":"^19.2.0", "react-dom":"^19.2.0", "lucide-react":"^0.468.0"},
-  "devDependencies": {"@types/better-sqlite3":"^7.6.13", "@types/luxon":"^3.7.1", "@types/node":"^24.10.0", "@types/react":"^19.2.2", "@types/react-dom":"^19.2.2", "@vitejs/plugin-react":"^5.1.0", "electron":"^39.2.0", "electron-builder":"^26.0.12", "electron-vite":"^4.0.1", "typescript":"^5.9.3", "vite":"^7.2.2", "vitest":"^4.0.8", "@playwright/test":"^1.56.1"},
-  "build": {"appId":"app.telldo.desktop", "productName":"Telldo", "directories":{"output":"release"}, "files":["out/**/*", "resources/**/*", "package.json"], "asarUnpack":["**/*.node"], "mac":{"target":["zip"], "category":"public.app-category.productivity", "identity":null}, "win":{"target":"nsis"}, "linux":{"target":"AppImage"}}
+  "name": "telldo",
+  "productName": "Telldo",
+  "version": "0.1.0",
+  "description": "Say it. Get it on your list. Local-first personal tasks.",
+  "author": "Telldo contributors",
+  "license": "MIT",
+  "private": true,
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs run",
+    "test:watch": "node scripts/test.mjs",
+    "package:mac": "npm run build && electron-builder --mac --dir",
+    "dist:mac": "npm run build && electron-builder --mac zip",
+    "test:smoke": "node tests/smoke.mjs",
+    "package:linux": "npm run build && electron-builder --linux --dir",
+    "package:mac:linux": "npm run build && node scripts/package-mac-linux.mjs",
+    "test:headless": "bash scripts/smoke-headless.sh",
+    "verify": "npm run build && npm test && npm run test:smoke"
+  },
+  "dependencies": {
+    "lucide-react": "0.468.0",
+    "luxon": "3.7.2",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "rrule": "2.8.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/luxon": "3.7.1",
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.1.0",
+    "electron": "45.3.2",
+    "electron-builder": "26.18.0",
+    "electron-vite": "4.0.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.8",
+    "vitest": "4.1.12"
+  },
+  "build": {
+    "appId": "app.telldo.desktop",
+    "productName": "Telldo",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "icon": "resources/icon.png"
+  }
 }
