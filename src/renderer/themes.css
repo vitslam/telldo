@@ -1,0 +1,522 @@
+:root {
+  color-scheme: light;
+  --page: #f5f5f5;
+  --panel: #fff;
+  --subtle: #ededed;
+  --hover: #e5e5e5;
+  --text: #252525;
+  --secondary: #686868;
+  --faint: #909090;
+  --border: #dedede;
+  --brand: #333;
+  --brand-text: #fff;
+  --tint: #e8e8e8;
+  --side: #eee;
+  --side-text: #666;
+  --side-active: #fff;
+  --composer: #fff;
+  --shadow: #0000000a;
+}
+:root[data-theme="forest"] {
+  --brand: #527159;
+  --tint: #e3eddf;
+  --side: #233b35;
+  --side-text: #b8cabc;
+  --side-active: #e7eddd;
+  --composer: #fffaf1;
+}
+:root[data-theme="ocean"] {
+  --brand: #3f6ca8;
+  --tint: #e1ebf8;
+  --side: #23344b;
+  --side-text: #bac9dd;
+  --side-active: #e3edfb;
+  --composer: #f7faff;
+}
+:root[data-theme="plum"] {
+  --brand: #85639d;
+  --tint: #eee4f5;
+  --side: #382d43;
+  --side-text: #cdbed7;
+  --side-active: #f0e5f7;
+  --composer: #fdf9ff;
+}
+:root[data-scheme="dark"] {
+  color-scheme: dark;
+  --page: #191919;
+  --panel: #232323;
+  --subtle: #2c2c2c;
+  --hover: #383838;
+  --text: #ebebeb;
+  --secondary: #b5b5b5;
+  --faint: #858585;
+  --border: #3c3c3c;
+  --brand: #ddd;
+  --brand-text: #191919;
+  --tint: #363636;
+  --side: #141414;
+  --side-text: #aaa;
+  --side-active: #363636;
+  --composer: #272727;
+  --shadow: #00000025;
+}
+:root[data-scheme="dark"][data-theme="forest"] {
+  --brand: #a5c49c;
+  --tint: #344638;
+  --side: #172720;
+  --side-text: #adbdaf;
+  --side-active: #344638;
+  --composer: #252e26;
+}
+:root[data-scheme="dark"][data-theme="ocean"] {
+  --brand: #97bbed;
+  --tint: #2d405a;
+  --side: #182332;
+  --side-text: #adbed5;
+  --side-active: #2d405a;
+  --composer: #242d3b;
+}
+:root[data-scheme="dark"][data-theme="plum"] {
+  --brand: #ceb0e3;
+  --tint: #49364f;
+  --side: #251e2e;
+  --side-text: #c4b2cf;
+  --side-active: #49364f;
+  --composer: #2e2636;
+}
+:root {
+  --ink: var(--text);
+  --muted: var(--secondary);
+  --line: var(--border);
+  --accent: var(--brand);
+  --accent-soft: var(--tint);
+  --paper: var(--page);
+  background: var(--page);
+  color: var(--text);
+}
+body,
+main,
+.app-shell,
+.assistant-dock {
+  background: var(--page);
+  color: var(--text);
+}
+button:hover {
+  background: var(--hover);
+}
+input,
+select,
+textarea,
+.detail-scroll input,
+.detail-scroll select {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--border);
+}
+input::placeholder,
+textarea::placeholder,
+.quick-add input::placeholder,
+.ai-bar textarea::placeholder {
+  color: var(--faint);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--shadow);
+}
+.sidebar {
+  background: var(--side);
+  color: var(--side-text);
+}
+.brand,
+.nav-item,
+.section-label,
+.section-label button,
+.new-list,
+.nav-item small,
+.local-note {
+  color: var(--side-text);
+}
+.brand-mark {
+  background: var(--brand);
+  color: var(--brand-text);
+}
+.nav-item.active {
+  background: var(--side-active);
+  color: var(--text);
+}
+.nav-item.active small {
+  color: var(--secondary);
+}
+.nav-item:hover,
+.new-list:hover {
+  background: #88888818;
+  color: var(--side-text);
+}
+.sidebar-bottom .nav-item {
+  border-color: #88888830;
+}
+.topbar,
+.quick-add {
+  border-color: var(--border);
+}
+.breadcrumb,
+.breadcrumb strong,
+.search svg,
+.search kbd,
+.workspace-status,
+.eyebrow,
+.view-heading .view-description,
+.heading-actions button,
+.task-toolbar,
+.task-toolbar > span,
+.task-toolbar button,
+.quick-add button,
+.quick-add > svg {
+  color: var(--secondary);
+}
+.breadcrumb span,
+.assistant-footnote {
+  color: var(--faint);
+}
+.search kbd {
+  border-color: var(--border);
+}
+.search input,
+.quick-add input {
+  background: transparent;
+}
+.heading-line h1,
+.task-title,
+.detail-title,
+.calendar-month-trigger,
+.dialog h2 {
+  color: var(--text);
+}
+.count-pill,
+.tag {
+  background: var(--subtle);
+  color: var(--secondary);
+}
+.task-row {
+  background: var(--panel);
+  border-color: var(--border);
+  box-shadow: 0 2px 6px var(--shadow);
+}
+.task-row:hover {
+  background: var(--panel);
+  border-color: var(--brand);
+  box-shadow: 0 4px 12px var(--shadow);
+}
+.task-row.selected {
+  background: var(--panel);
+  border-color: var(--brand);
+}
+.task-meta,
+.task-date,
+.task-title svg {
+  color: var(--secondary);
+}
+.task-date.overdue {
+  color: #c17b62;
+}
+.check-button {
+  border-color: var(--faint);
+}
+.check-button.high {
+  border-color: #bc8469;
+}
+.check-button:hover {
+  border-color: var(--brand);
+  background: var(--tint);
+}
+.check-button.checked {
+  background: var(--brand);
+  color: var(--brand-text);
+  border-color: var(--brand);
+}
+.completed .task-title,
+.empty h3,
+.empty p {
+  color: var(--faint);
+}
+.ai-composer {
+  background: var(--composer);
+  border-color: var(--border);
+  box-shadow: 0 6px 24px var(--shadow);
+}
+.ai-composer:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--shadow);
+}
+.assistant-identity strong,
+.assistant-spark {
+  color: var(--brand);
+}
+.assistant-name,
+.composer-heading kbd,
+.assistant-examples > span,
+.ai-caption {
+  color: var(--secondary);
+}
+.ai-bar {
+  background: transparent;
+}
+.ai-bar textarea {
+  background: transparent;
+  color: var(--text);
+}
+.ai-submit,
+.primary {
+  background: var(--brand);
+  color: var(--brand-text);
+}
+.ai-submit:hover,
+.primary:hover {
+  background: var(--brand);
+  filter: brightness(0.92);
+}
+.ai-submit:disabled {
+  background: var(--subtle);
+  color: var(--faint);
+}
+.assistant-examples button {
+  background: var(--panel);
+  color: var(--secondary);
+  border-color: var(--border);
+}
+.assistant-examples button:hover {
+  background: var(--tint);
+  border-color: var(--brand);
+}
+.ai-cancel,
+.connection-action,
+.text-button {
+  color: var(--brand);
+}
+.detail,
+.detail-top,
+.dialog {
+  background: var(--panel);
+  border-color: var(--border);
+}
+.detail-top > span,
+.detail-top > button:last-child,
+.detail-scroll label,
+.detail-section h3,
+.detail-section h3 svg,
+label {
+  color: var(--secondary);
+}
+.detail-top .detail-save {
+  color: var(--brand-text);
+}
+.detail-title {
+  background: transparent;
+  border-color: transparent;
+}
+.detail-title:focus {
+  box-shadow: 0 2px 0 var(--brand);
+}
+.detail-scroll textarea:not(.detail-title) {
+  background: var(--subtle);
+  color: var(--text);
+}
+.detail-section,
+.calendar-date-editor {
+  border-color: var(--border);
+}
+.secondary {
+  color: var(--secondary);
+  border-color: var(--border);
+}
+.notice,
+.undo-bar,
+.proposal-banner {
+  background: var(--tint);
+  color: var(--secondary);
+  border-color: var(--border);
+}
+.overlay {
+  background: #00000060;
+}
+.calendar-navigation > button,
+.calendar-month-trigger svg,
+.calendar-filters,
+.calendar-filters label,
+.calendar-zone {
+  color: var(--secondary);
+}
+.calendar-modes {
+  background: var(--subtle);
+  border-color: var(--border);
+}
+.calendar-modes button {
+  color: var(--secondary);
+}
+.calendar-modes button[aria-pressed="true"] {
+  background: var(--panel);
+  color: var(--brand);
+}
+.calendar-filters select {
+  background: var(--panel);
+  color: var(--secondary);
+  border-color: var(--border);
+}
+.calendar-filters > button {
+  background: var(--tint);
+  color: var(--brand);
+}
+.planned-layout,
+.planned-layout.has-detail,
+.calendar-body {
+  background: var(--panel);
+  border-color: var(--border);
+}
+.calendar-weekdays,
+.calendar-legend {
+  background: var(--subtle);
+  border-color: var(--border);
+}
+.calendar-weekdays span,
+.calendar-legend,
+.calendar-legend button {
+  color: var(--secondary);
+}
+.calendar-weekdays span:nth-last-child(-n + 2) {
+  color: var(--faint);
+}
+.calendar-day,
+.calendar-day:nth-child(7n),
+.calendar-day:nth-child(7n-1) {
+  background: var(--panel);
+  border-color: var(--border);
+}
+.calendar-day.outside {
+  background: var(--page);
+}
+.calendar-day.today,
+.calendar-day.chosen {
+  background: var(--tint);
+}
+.calendar-day.chosen,
+.calendar-day.drag-over {
+  box-shadow: inset 0 0 0 1px var(--brand);
+}
+.calendar-day.drag-over {
+  background: var(--tint);
+}
+.calendar-day-header button {
+  color: var(--secondary);
+}
+.calendar-day.outside .calendar-day-header button {
+  color: var(--faint);
+}
+.calendar-day.today .calendar-day-header button:first-child {
+  background: var(--brand);
+  color: var(--brand-text);
+}
+.calendar-card {
+  background: var(--tint);
+  color: var(--text);
+}
+.calendar-card:hover,
+.calendar-card[aria-pressed="true"] {
+  background: var(--hover);
+}
+.calendar-card[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1px var(--brand);
+}
+.calendar-card.deadline {
+  background: transparent;
+  color: var(--secondary);
+  border-left-color: var(--faint) !important;
+}
+.calendar-card.overdue {
+  background: var(--tint);
+  color: #c17b62;
+}
+.calendar-more {
+  color: var(--brand);
+}
+.calendar-unscheduled {
+  background: var(--subtle);
+  border-color: var(--border);
+}
+.theme-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+.theme-option {
+  padding: 9px;
+  flex-direction: column;
+  position: relative;
+  gap: 8px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--secondary);
+}
+.theme-option[aria-pressed="true"] {
+  border-color: var(--brand);
+  background: var(--tint);
+  color: var(--brand);
+}
+.theme-option > svg {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.theme-swatch {
+  width: 100%;
+  height: 40px;
+  border-radius: 5px;
+  border: 1px solid #88888820;
+}
+.swatch-mono {
+  background: linear-gradient(90deg, #252525 30%, #ececec 30%);
+}
+.swatch-forest {
+  background: linear-gradient(90deg, #233b35 30%, #e3eddf 30%);
+}
+.swatch-ocean {
+  background: linear-gradient(90deg, #23344b 30%, #e1ebf8 30%);
+}
+.swatch-plum {
+  background: linear-gradient(90deg, #382d43 30%, #eee4f5 30%);
+}
+.appearance-modes {
+  display: flex;
+  padding: 4px;
+  gap: 4px;
+  background: var(--subtle);
+  border-radius: 9px;
+  margin-top: 14px;
+}
+.appearance-modes button {
+  flex: 1;
+  font-size: 12px;
+  padding: 8px;
+  color: var(--secondary);
+}
+.appearance-modes button[aria-pressed="true"] {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 4px var(--shadow);
+}
+.appearance-settings > p {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--faint);
+}
+:root[data-scheme="dark"] .error {
+  background: #422c2a;
+  border-color: #73453f;
+  color: #f0b1a7;
+}
+:root[data-scheme="dark"] .paper {
+  background: var(--subtle);
+  border-color: var(--border);
+}

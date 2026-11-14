@@ -107,6 +107,8 @@ export interface Proposal extends ProposalInput {
   created_at: string;
 }
 export interface Settings {
+  theme: "mono" | "forest" | "ocean" | "plum";
+  appearance: "system" | "light" | "dark";
   language: "system" | "zh" | "en";
   timeZone: string;
   codexPath: string;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import PlannedView from "./PlannedView";
+import { applyAppearance } from "./appearance";
 import { calendarMonthRange } from "../shared/calendar";
 import { DateTime } from "luxon";
 import {
@@ -52,6 +53,17 @@ const zh: Record<string, string> = {
     "SSH 使用已有密钥和已信任的主机记录，Telldo 不保存密码或 token。",
   "SSH connection details": "SSH 连接参数",
 
+  Appearance: "外观",
+  "Color theme": "主题配色",
+  "Black & white": "经典黑白",
+  Forest: "森林",
+  Ocean: "海洋",
+  Plum: "暮紫",
+  Light: "白天",
+  Dark: "黑夜",
+  "Follow system": "跟随系统",
+  "Display mode": "显示模式",
+  "Preview instantly. Save to keep your choice.": "选择即可预览，保存后生效。",
   Today: "今天",
   Planned: "计划",
   Anytime: "随时",
@@ -240,6 +252,9 @@ export default function App() {
       setData(next);
     }
   };
+  useEffect(() => {
+    if (data) applyAppearance(data.settings, true);
+  }, [data?.settings.theme, data?.settings.appearance]);
   const lang =
     data?.settings.language === "system"
       ? data.systemLanguage
@@ -1646,6 +1661,15 @@ function SettingsDialog({
   act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<Settings>(data.settings);
+  useEffect(() => {
+    applyAppearance(draft);
+    return () => applyAppearance(data.settings);
+  }, [
+    draft.theme,
+    draft.appearance,
+    data.settings.theme,
+    data.settings.appearance,
+  ]);
   return (
     <div className="overlay">
       <div className="dialog settings">
@@ -1655,6 +1679,56 @@ function SettingsDialog({
             <X size={20} />
           </button>
         </div>
+        <section className="appearance-settings">
+          <h3>{t("Appearance")}</h3>
+          <div
+            className="theme-options"
+            role="group"
+            aria-label={t("Color theme")}
+          >
+            {(
+              [
+                ["mono", "Black & white"],
+                ["forest", "Forest"],
+                ["ocean", "Ocean"],
+                ["plum", "Plum"],
+              ] as const
+            ).map(([theme, label]) => (
+              <button
+                key={theme}
+                className="theme-option"
+                aria-pressed={draft.theme === theme}
+                onClick={() => setDraft({ ...draft, theme })}
+              >
+                <span className={`theme-swatch swatch-${theme}`} />
+                <span>{t(label)}</span>
+                {draft.theme === theme && <Check size={14} />}
+              </button>
+            ))}
+          </div>
+          <div
+            className="appearance-modes"
+            role="group"
+            aria-label={t("Display mode")}
+          >
+            {(
+              [
+                ["light", "Light"],
+                ["dark", "Dark"],
+                ["system", "Follow system"],
+              ] as const
+            ).map(([appearance, label]) => (
+              <button
+                key={appearance}
+                aria-pressed={draft.appearance === appearance}
+                onClick={() => setDraft({ ...draft, appearance })}
+              >
+                {t(label)}
+              </button>
+            ))}
+          </div>
+          <p>{t("Preview instantly. Save to keep your choice.")}</p>
+        </section>
         <div className="form-grid">
           <label>
             {t("Language")}

@@ -101,6 +101,8 @@ export class TaskService {
       .prepare("SELECT value FROM settings WHERE key=?")
       .get("preferences") as { value: string } | undefined;
     return {
+      theme: "mono",
+      appearance: "system",
       language: "system",
       timeZone: "",
       codexPath: "",
@@ -121,6 +123,8 @@ export class TaskService {
       Object.keys(object(input)).some(
         (k) =>
           ![
+            "theme",
+            "appearance",
             "language",
             "timeZone",
             "codexPath",
@@ -139,6 +143,8 @@ export class TaskService {
       throw new Error("Unknown settings field");
     const value = { ...this.getSettings(), ...input };
     if (
+      !["mono", "forest", "ocean", "plum"].includes(value.theme) ||
+      !["system", "light", "dark"].includes(value.appearance) ||
       !["system", "zh", "en"].includes(value.language) ||
       typeof value.timeZone !== "string" ||
       (value.timeZone !== "" && !IANAZone.isValidZone(value.timeZone)) ||
