@@ -3,7 +3,13 @@ import { randomUUID } from "node:crypto";
 import { DateTime } from "luxon";
 import { RRule } from "rrule";
 import type { Task, Recurrence, Occurrence } from "../shared/types";
-import { instant, validZone, validDate, type Clock } from "../shared/dates";
+import {
+  instant,
+  validZone,
+  validDate,
+  occurrenceReminderAt,
+  type Clock,
+} from "../shared/dates";
 export type RecurrenceSpec = Omit<Recurrence, "id" | "task_id">;
 export interface Reminder {
   taskId: string;
@@ -141,6 +147,28 @@ export class ScheduleService {
     db.exec(`CREATE TABLE IF NOT EXISTS recurrences(id TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id),rrule TEXT NOT NULL,dtstart TEXT NOT NULL,tzid TEXT NOT NULL,until TEXT,count INTEGER,exdates TEXT NOT NULL DEFAULT '[]');
       CREATE TABLE IF NOT EXISTS occurrences(series_id TEXT NOT NULL REFERENCES recurrences(id) ON DELETE CASCADE,occurrence_key TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'todo',due_date TEXT NOT NULL,due_at TEXT,override_date TEXT,completed_at TEXT,PRIMARY KEY(series_id,occurrence_key));
       CREATE TABLE IF NOT EXISTS notification_log(id TEXT PRIMARY KEY,target_id TEXT NOT NULL,fire_at TEXT NOT NULL,fired_at TEXT,suppressed INTEGER NOT NULL DEFAULT 0,UNIQUE(target_id,fire_at));`);
+    this.migrateOccurrences();
+  }
+  private migrateOccurrences() {
+    const columns = new Set(
+      this.db
+        .prepare("PRAGMA table_info(occurrences)")
+        .all()
+        .map((c) => c.name),
+    );
+    for (const [name, definition] of Object.entries({
+      version: "INTEGER NOT NULL DEFAULT 1",
+      override_due_at: "TEXT",
+      reminder_override: "TEXT NOT NULL DEFAULT 'inherit'",
+      override_reminder_at: "TEXT",
+    }))
+      if (!columns.has(name))
+        this.db.exec(
+          `ALTER TABLE occurrences ADD COLUMN ${name} ${definition}`,
+        );
+    this.db.exec(
+      "CREATE TABLE IF NOT EXISTS occurrence_audit(id TEXT PRIMARY KEY,at TEXT NOT NULL,series_id TEXT NOT NULL,occurrence_key TEXT NOT NULL,before_json TEXT NOT NULL,after_json TEXT NOT NULL)",
+    );
   }
   listRecurrences(): Recurrence[] {
     return (
@@ -338,40 +366,262 @@ export class ScheduleService {
       return inserted;
     })();
   }
+  /** Generate only the requested month-sized window; stored overrides are never replaced. */
+  materializeRange(
+    startDay: string,
+    endDay: string,
+    displayZone: string,
+  ): number {
+    if (!validDate(startDay) || !validDate(endDay) || !validZone(displayZone))
+      throw Error("Invalid calendar range");
+    const startRange = DateTime.fromISO(startDay, { zone: displayZone }),
+      endRange = DateTime.fromISO(endDay, { zone: displayZone });
+    if (endRange <= startRange || endRange.diff(startRange, "days").days > 62)
+      throw Error("Calendar range must be at most 62 days");
+    return this.db.transaction(() => {
+      let inserted = 0;
+      const put = this.db.prepare(
+        "INSERT OR IGNORE INTO occurrences(series_id,occurrence_key,status,due_date,due_at,override_date,completed_at) VALUES(?,?,'todo',?,?,NULL,NULL)",
+      );
+      for (const series of this.listRecurrences()) {
+        const task = this.db
+          .prepare("SELECT * FROM tasks WHERE id=? AND deleted_at IS NULL")
+          .get(series.task_id) as Task | undefined;
+        if (!task || task.status === "done") continue;
+        const start = DateTime.fromISO(series.dtstart, {
+          zone: series.tzid,
+        }).setZone(series.tzid);
+        const timed = task.due_kind === "datetime";
+        const lo = timed
+          ? startRange.setZone(series.tzid).startOf("day")
+          : DateTime.fromISO(startDay, { zone: series.tzid });
+        const hi = timed
+          ? endRange.setZone(series.tzid).endOf("day")
+          : DateTime.fromISO(endDay, { zone: series.tzid });
+        const until = series.until
+          ? DateTime.fromISO(series.until, { zone: series.tzid }).endOf("day")
+          : hi;
+        if (start > hi || until < lo) continue;
+        const opts = RRule.parseString(series.rrule),
+          dates: DateTime[] = [];
+        const wall = (d: DateTime) =>
+          new Date(
+            Date.UTC(d.year, d.month - 1, d.day, d.hour, d.minute, d.second),
+          );
+        const fromWall = (d: Date) =>
+          DateTime.fromObject(
+            {
+              year: d.getUTCFullYear(),
+              month: d.getUTCMonth() + 1,
+              day: d.getUTCDate(),
+              hour: d.getUTCHours(),
+              minute: d.getUTCMinutes(),
+              second: d.getUTCSeconds(),
+            },
+            { zone: series.tzid },
+          );
+        if (opts.freq === RRule.MONTHLY && !opts.byweekday) {
+          const requested = Array.isArray(opts.bymonthday)
+            ? opts.bymonthday[0]
+            : (opts.bymonthday ?? start.day);
+          const first = start
+            .startOf("month")
+            .set({
+              day: Math.min(requested, start.daysInMonth!),
+              hour: start.hour,
+              minute: start.minute,
+              second: start.second,
+            });
+          const skippedFirst = first < start ? 1 : 0;
+          for (
+            let month = lo.startOf("month");
+            month <= hi;
+            month = month.plus({ months: 1 })
+          ) {
+            const n =
+              (month.year - start.year) * 12 +
+              month.month -
+              start.month -
+              skippedFirst;
+            if (n < 0 || (series.count !== null && n >= series.count)) continue;
+            dates.push(
+              month.set({
+                day: Math.min(requested, month.daysInMonth!),
+                hour: start.hour,
+                minute: start.minute,
+                second: start.second,
+              }),
+            );
+          }
+        } else {
+          // With no COUNT there is no reason to iterate every historical occurrence.
+          // A weekly anchor retains the original weekday when BYDAY was omitted.
+          let anchor = start;
+          if (series.count === null && lo > start) {
+            anchor = (
+              opts.freq === RRule.WEEKLY
+                ? lo.startOf("week")
+                : lo.startOf("month")
+            ).set({
+              hour: start.hour,
+              minute: start.minute,
+              second: start.second,
+            });
+            if (opts.freq === RRule.DAILY)
+              anchor = lo.set({
+                hour: start.hour,
+                minute: start.minute,
+                second: start.second,
+              });
+            if (opts.freq === RRule.WEEKLY && !opts.byweekday)
+              opts.byweekday = [start.weekday - 1];
+            if (anchor < start) anchor = start;
+          }
+          const rule = new RRule({
+            ...opts,
+            dtstart: wall(anchor),
+            count: series.count ?? undefined,
+          });
+          dates.push(...rule.between(wall(lo), wall(hi), true).map(fromWall));
+        }
+        for (const date of dates) {
+          if (date < start || date > until) continue;
+          const visibleDay = timed
+            ? date.setZone(displayZone).toISODate()!
+            : date.toISODate()!;
+          if (visibleDay < startDay || visibleDay >= endDay) continue;
+          const key = timed
+            ? `${date.toISODate()}T${start.toFormat("HH:mm:ss")}`
+            : date.toISODate()!;
+          if (
+            series.exdates.includes(key) ||
+            series.exdates.includes(date.toISODate()!)
+          )
+            continue;
+          const changes = put.run(
+            series.id,
+            key,
+            date.toISODate(),
+            timed ? date.toUTC().toISO() : null,
+          ).changes;
+          inserted += changes;
+          // Browsing history must not enqueue previously unseen overdue notifications.
+          if (changes) {
+            const occurrence = this.db
+              .prepare(
+                "SELECT * FROM occurrences WHERE series_id=? AND occurrence_key=?",
+              )
+              .get(series.id, key) as Occurrence;
+            const reminder = occurrenceReminderAt(
+              task,
+              occurrence,
+              series.tzid,
+            );
+            if (reminder && DateTime.fromISO(reminder).toMillis() < Date.now())
+              this.db
+                .prepare(
+                  "INSERT OR IGNORE INTO notification_log VALUES(?,?,?,?,1)",
+                )
+                .run(
+                  randomUUID(),
+                  `${series.id}:${key}`,
+                  DateTime.fromISO(reminder).toUTC().toISO(),
+                  new Date().toISOString(),
+                );
+          }
+        }
+      }
+      return inserted;
+    })();
+  }
   updateOccurrence(
     seriesId: string,
     key: string,
-    patch: { status?: Occurrence["status"]; override_date?: string | null },
+    patch: {
+      status?: Occurrence["status"];
+      override_date?: string | null;
+      override_due_at?: string | null;
+      reminder_override?: "inherit" | "explicit";
+      override_reminder_at?: string | null;
+    },
+    expectedVersion?: number,
   ): Occurrence {
     if (
+      !patch ||
+      typeof patch !== "object" ||
       Object.keys(patch).some(
-        (k) => !["status", "override_date"].includes(k),
+        (k) =>
+          ![
+            "status",
+            "override_date",
+            "override_due_at",
+            "reminder_override",
+            "override_reminder_at",
+          ].includes(k),
       ) ||
-      (patch.status && !["todo", "done", "skipped"].includes(patch.status)) ||
+      (patch.status !== undefined &&
+        !["todo", "done", "skipped"].includes(patch.status)) ||
       (patch.override_date !== undefined &&
         patch.override_date !== null &&
-        !validDate(patch.override_date))
+        !validDate(patch.override_date)) ||
+      (patch.reminder_override !== undefined &&
+        !["inherit", "explicit"].includes(patch.reminder_override)) ||
+      [patch.override_due_at, patch.override_reminder_at].some(
+        (x) =>
+          x !== undefined &&
+          x !== null &&
+          (typeof x !== "string" ||
+            !/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(x) ||
+            !DateTime.fromISO(x).isValid),
+      )
     )
-      throw new Error("Invalid occurrence update / 重复实例修改无效");
-    const o = this.db
-      .prepare(
-        "SELECT * FROM occurrences WHERE series_id=? AND occurrence_key=?",
+      throw Error("Invalid occurrence update / 重复实例修改无效");
+    return this.db.transaction(() => {
+      const o = this.db
+        .prepare(
+          "SELECT * FROM occurrences WHERE series_id=? AND occurrence_key=?",
+        )
+        .get(seriesId, key) as Occurrence | undefined;
+      if (!o) throw Error("Occurrence not found / 重复实例不存在");
+      if (
+        expectedVersion !== undefined &&
+        (!Number.isSafeInteger(expectedVersion) ||
+          expectedVersion !== o.version)
       )
-      .get(seriesId, key) as Occurrence | undefined;
-    if (!o) throw new Error("Occurrence not found / 重复实例不存在");
-    const status = patch.status ?? o.status,
-      override =
-        patch.override_date === undefined
-          ? o.override_date
-          : patch.override_date,
-      completed =
-        status === "done" ? (o.completed_at ?? new Date().toISOString()) : null;
-    this.db
-      .prepare(
-        "UPDATE occurrences SET status=?,override_date=?,completed_at=? WHERE series_id=? AND occurrence_key=?",
+        throw Error("Version conflict / 实例已改变，请刷新后重试");
+      if (!o.due_at && patch.override_due_at)
+        throw Error("Date-only occurrence cannot have a timed override");
+      const after: Occurrence = {
+        ...o,
+        ...patch,
+        version: (o.version ?? 1) + 1,
+      };
+      if (
+        patch.override_date !== undefined &&
+        patch.override_due_at === undefined
       )
-      .run(status, override, completed, seriesId, key);
-    return { ...o, status, override_date: override, completed_at: completed };
+        after.override_due_at = null;
+      after.completed_at =
+        after.status === "done"
+          ? (o.completed_at ?? new Date().toISOString())
+          : null;
+      this.db
+        .prepare(
+          "UPDATE occurrences SET status=@status,override_date=@override_date,completed_at=@completed_at,version=@version,override_due_at=@override_due_at,reminder_override=@reminder_override,override_reminder_at=@override_reminder_at WHERE series_id=@series_id AND occurrence_key=@occurrence_key",
+        )
+        .run(after);
+      this.db
+        .prepare("INSERT INTO occurrence_audit VALUES(?,?,?,?,?,?)")
+        .run(
+          randomUUID(),
+          new Date().toISOString(),
+          seriesId,
+          key,
+          JSON.stringify(o),
+          JSON.stringify(after),
+        );
+      return after;
+    })();
   }
   dueNotifications(now: Clock = new Date(), startup = false): Reminder[] {
     this.materialize(now);
@@ -382,7 +632,7 @@ export class ScheduleService {
         recurring = new Set(series.map((x) => x.task_id)),
         tasks = this.db
           .prepare(
-            "SELECT * FROM tasks WHERE deleted_at IS NULL AND status='todo' AND reminder_at IS NOT NULL",
+            "SELECT * FROM tasks WHERE deleted_at IS NULL AND status='todo' ",
           )
           .all() as Task[];
       const log = this.db.prepare(
@@ -404,50 +654,22 @@ export class ScheduleService {
       };
       for (const task of tasks) {
         if (!recurring.has(task.id)) {
-          fire(task.id, DateTime.fromISO(task.reminder_at!), {
+          if (!task.reminder_at) continue;
+          fire(task.id, DateTime.fromISO(task.reminder_at), {
             taskId: task.id,
             title: task.title,
           });
           continue;
         }
-        const s = series.find((x) => x.task_id === task.id)!,
-          original =
-            task.due_kind === "datetime"
-              ? DateTime.fromISO(task.due_at!).setZone(s.tzid)
-              : DateTime.fromISO(task.due_date!, { zone: s.tzid }),
-          reminderTime = DateTime.fromISO(task.reminder_at!).setZone(s.tzid),
-          offset = reminderTime.diff(original).toMillis(),
-          dayOffset = reminderTime
-            .startOf("day")
-            .diff(original.startOf("day"), "days").days;
+        const s = series.find((x) => x.task_id === task.id)!;
         for (const o of this.db
           .prepare(
             "SELECT * FROM occurrences WHERE series_id=? AND status='todo'",
           )
           .all(s.id) as Occurrence[]) {
-          let due = o.due_at
-            ? DateTime.fromISO(o.due_at).setZone(s.tzid)
-            : DateTime.fromISO(o.due_date, { zone: s.tzid });
-          if (o.override_date) {
-            const override = DateTime.fromISO(o.override_date, {
-              zone: s.tzid,
-            });
-            due = override.set({
-              hour: due.hour,
-              minute: due.minute,
-              second: due.second,
-            });
-          }
-          const fireAt =
-            task.due_kind === "date"
-              ? due
-                  .plus({ days: dayOffset })
-                  .set({
-                    hour: reminderTime.hour,
-                    minute: reminderTime.minute,
-                    second: reminderTime.second,
-                  })
-              : due.plus({ milliseconds: offset });
+          const reminderAt = occurrenceReminderAt(task, o, s.tzid);
+          if (!reminderAt) continue;
+          const fireAt = DateTime.fromISO(reminderAt);
           fire(`${s.id}:${o.occurrence_key}`, fireAt, {
             taskId: task.id,
             title: task.title,

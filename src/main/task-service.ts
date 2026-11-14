@@ -919,6 +919,20 @@ export class TaskService {
             due_at: o.due_at,
             planned_date: o.override_date,
           });
+          if (o.override_due_at != null)
+            parseTaskPatch({ due_at: o.override_due_at });
+          if (o.override_reminder_at != null)
+            parseTaskPatch({ reminder_at: o.override_reminder_at });
+          if (
+            o.reminder_override !== undefined &&
+            !["inherit", "explicit"].includes(o.reminder_override)
+          )
+            throw Error("Invalid reminder override");
+          if (
+            o.version !== undefined &&
+            (!Number.isSafeInteger(o.version) || o.version < 1)
+          )
+            throw Error("Invalid occurrence version");
           if (o.completed_at) parseTaskPatch({ reminder_at: o.completed_at });
           const series = this.schedules
             .listRecurrences()
@@ -931,7 +945,8 @@ export class TaskService {
               : o.due_date;
           if (
             o.occurrence_key !== expectedKey ||
-            (task.due_kind === "date" && o.due_at !== null) ||
+            (task.due_kind === "date" &&
+              (o.due_at !== null || o.override_due_at != null)) ||
             (task.due_kind === "datetime" &&
               DateTime.fromISO(o.due_at ?? "")
                 .setZone(series.tzid)
@@ -941,7 +956,9 @@ export class TaskService {
               "Occurrence identity does not match its original schedule date",
             );
           this.db
-            .prepare("INSERT OR REPLACE INTO occurrences VALUES(?,?,?,?,?,?,?)")
+            .prepare(
+              "INSERT OR REPLACE INTO occurrences(series_id,occurrence_key,status,due_date,due_at,override_date,completed_at,version,override_due_at,reminder_override,override_reminder_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            )
             .run(
               seriesMap.get(o.series_id),
               o.occurrence_key,
@@ -950,6 +967,10 @@ export class TaskService {
               o.due_at,
               o.override_date,
               o.completed_at,
+              1,
+              o.override_due_at ?? null,
+              o.reminder_override ?? "inherit",
+              o.override_reminder_at ?? null,
             );
         }
       }

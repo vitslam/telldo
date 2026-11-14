@@ -71,6 +71,10 @@ export interface Occurrence {
   due_date: string;
   due_at: string | null;
   override_date: string | null;
+  version?: number;
+  override_due_at?: string | null;
+  reminder_override?: "inherit" | "explicit";
+  override_reminder_at?: string | null;
   completed_at: string | null;
 }
 export interface ProposalAction {

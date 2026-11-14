@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import { readFile, mkdir } from "node:fs/promises";
 import { TaskService } from "./task-service";
+import { CalendarService } from "./calendar-service";
 import type { ScheduleService } from "./schedule-service";
 import { CodexAdapter } from "./codex-adapter";
 import { SshCodexAdapter } from "./ssh-codex-adapter";
@@ -27,6 +28,7 @@ let tray: Tray | null = null;
 let quitting = false;
 let service: TaskService;
 let schedules: ScheduleService;
+let calendar: CalendarService;
 let adapter: CodexAdapter | SshCodexAdapter;
 let aiRunning = false;
 let aiProbing = false;
@@ -166,8 +168,9 @@ function createWindow() {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void win.loadFile(join(__dirname, "../renderer/index.html"));
 }
-async function snapshot() {
-  schedules.materialize();
+async function snapshot(range?: { start: string; end: string; zone: string }) {
+  if (range) schedules.materializeRange(range.start, range.end, range.zone);
+  else schedules.materialize();
   return {
     lists: service.listLists(),
     tasks: service.listTasks(),
@@ -183,7 +186,7 @@ async function snapshot() {
 async function dispatch(method: string, args: any[]) {
   switch (method) {
     case "snapshot":
-      return snapshot();
+      return snapshot(args[0]);
     case "createList":
       return service.createList(args[0], args[1]);
     case "updateList":
@@ -203,7 +206,19 @@ async function dispatch(method: string, args: any[]) {
     case "removeRecurrence":
       return schedules.removeRecurrence(args[0]);
     case "updateOccurrence":
-      return schedules.updateOccurrence(args[0], args[1], args[2]);
+      return schedules.updateOccurrence(args[0], args[1], args[2], args[3]);
+    case "calendarPreview":
+      return calendar.preview(args[0]);
+    case "calendarApply": {
+      const result = calendar.apply(args[0]);
+      send("changed", null);
+      return result;
+    }
+    case "calendarUndo": {
+      const result = calendar.undo(args[0]);
+      send("changed", null);
+      return result;
+    }
     case "applyProposal":
       return service.applyProposal(args[0], true);
     case "rejectProposal":
@@ -343,6 +358,7 @@ else {
       await mkdir(app.getPath("userData"), { recursive: true });
       service = new TaskService(join(app.getPath("userData"), "telldo.sqlite"));
       schedules = service.schedules;
+      calendar = new CalendarService(service);
       adapter = new CodexAdapter({
         resourceDir: join(app.getAppPath(), "resources"),
       });

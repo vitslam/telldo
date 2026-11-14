@@ -68,8 +68,8 @@ export function taskFromOccurrence(
   occurrence: Occurrence,
   zone: string,
 ): Task {
-  let dueAt = occurrence.due_at;
-  if (dueAt && occurrence.override_date) {
+  let dueAt = occurrence.override_due_at || occurrence.due_at;
+  if (dueAt && occurrence.override_date && !occurrence.override_due_at) {
     const original = DateTime.fromISO(dueAt).setZone(zone);
     dueAt = DateTime.fromISO(occurrence.override_date, { zone })
       .set({
@@ -85,13 +85,58 @@ export function taskFromOccurrence(
     ...task,
     status: occurrence.status === "todo" ? "todo" : "done",
     due_kind: dueAt ? "datetime" : "date",
-    due_date: occurrence.override_date || occurrence.due_date,
+    due_date: dueAt
+      ? DateTime.fromISO(dueAt).setZone(zone).toISODate()
+      : occurrence.override_date || occurrence.due_date,
     due_at: dueAt,
     time_zone: dueAt ? zone : null,
     completed_at: occurrence.completed_at,
+    reminder_at: occurrenceReminderAt(task, occurrence, zone),
     planned_date:
       occurrence.due_date === task.due_date ? task.planned_date : null,
   };
+}
+/** Effective instance reminder, including an explicit keep/clear override. */
+export function occurrenceReminderAt(
+  task: Task,
+  occurrence: Occurrence,
+  zone: string,
+): string | null {
+  if (occurrence.reminder_override === "explicit")
+    return occurrence.override_reminder_at ?? null;
+  if (!task.reminder_at) return null;
+  const original =
+    task.due_kind === "datetime"
+      ? DateTime.fromISO(task.due_at!).setZone(zone)
+      : DateTime.fromISO(task.due_date!, { zone });
+  const reminder = DateTime.fromISO(task.reminder_at).setZone(zone);
+  let due = occurrence.override_due_at
+    ? DateTime.fromISO(occurrence.override_due_at).setZone(zone)
+    : occurrence.due_at
+      ? DateTime.fromISO(occurrence.due_at).setZone(zone)
+      : DateTime.fromISO(occurrence.due_date, { zone });
+  if (occurrence.override_date && !occurrence.override_due_at)
+    due = DateTime.fromISO(occurrence.override_date, { zone }).set({
+      hour: due.hour,
+      minute: due.minute,
+      second: due.second,
+      millisecond: due.millisecond,
+    });
+  const result =
+    task.due_kind === "date"
+      ? due
+          .plus({
+            days: reminder.startOf("day").diff(original.startOf("day"), "days")
+              .days,
+          })
+          .set({
+            hour: reminder.hour,
+            minute: reminder.minute,
+            second: reminder.second,
+            millisecond: reminder.millisecond,
+          })
+      : due.plus({ milliseconds: reminder.diff(original).toMillis() });
+  return result.toUTC().toISO();
 }
 export function formatTaskDate(
   task: Pick<Task, "due_kind" | "due_date" | "due_at" | "time_zone">,

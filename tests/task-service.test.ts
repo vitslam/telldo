@@ -45,18 +45,16 @@ afterEach(() => {
 describe("manual task service without any Codex dependency", () => {
   it("restores older preferences with portable local transport defaults", () => {
     const s = service();
-    s.db
-      .prepare("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)")
-      .run(
-        "preferences",
-        JSON.stringify({
-          language: "en",
-          timeZone: "UTC",
-          codexPath: "/usr/local/bin/codex",
-          alwaysConfirm: true,
-          closeToTray: false,
-        }),
-      );
+    s.db.prepare("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)").run(
+      "preferences",
+      JSON.stringify({
+        language: "en",
+        timeZone: "UTC",
+        codexPath: "/usr/local/bin/codex",
+        alwaysConfirm: true,
+        closeToTray: false,
+      }),
+    );
     expect(s.getSettings()).toMatchObject({
       language: "en",
       aiTransport: "local",
@@ -77,8 +75,7 @@ describe("manual task service without any Codex dependency", () => {
       sshUser: "developer",
       sshPort: 2222,
       sshCodexPath: "/home/developer/.local/bin/codex",
-      sshRunnerPath:
-        "/opt/telldo/resources/ssh-codex-runner.py",
+      sshRunnerPath: "/opt/telldo/resources/ssh-codex-runner.py",
       sshProxyUrl: "http://192.0.2.10:3128",
     };
     expect(s.setSettings(config)).toMatchObject(config);
@@ -669,7 +666,9 @@ describe("consistent backup and JSON transfer", () => {
       exdates: [],
     });
     s.db
-      .prepare("INSERT OR REPLACE INTO occurrences VALUES(?,?,?,?,?,?,?)")
+      .prepare(
+        "INSERT OR REPLACE INTO occurrences(series_id,occurrence_key,status,due_date,due_at,override_date,completed_at) VALUES(?,?,?,?,?,?,?)",
+      )
       .run(
         series.id,
         "2026-01-01",
