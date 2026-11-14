@@ -42,6 +42,12 @@ export function conversationContext(context: Record<string, unknown>) {
   return {
     conversation: history,
     ...(continuation ? { continuation } : {}),
+    ...(typeof context.now === "string"
+      ? { now: context.now.slice(0, 50) }
+      : {}),
+    ...(context.readOnlyRecurrences
+      ? { readOnlyRecurrences: context.readOnlyRecurrences }
+      : {}),
     inventory: context.inventory,
     readOnlySchedule: context.readOnlySchedule,
   };

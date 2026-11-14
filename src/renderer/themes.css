@@ -1689,3 +1689,46 @@ button.brand:focus-visible {
   min-width: auto;
   border-color: transparent;
 }
+.recurring-change .proposal-change-symbol {
+  background: var(--tint);
+  color: var(--brand);
+}
+.proposal-recurrence-summary {
+  margin-top: 13px;
+}
+.recurrence-pattern {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--subtle);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.recurrence-pattern > span {
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+.proposal-recurrence-summary dl {
+  margin-top: 16px;
+  gap: 8px;
+}
+.recurrence-notes {
+  margin: 14px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--secondary);
+}
+.recurrence-tags {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--faint);
+}

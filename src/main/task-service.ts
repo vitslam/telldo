@@ -12,9 +12,11 @@ import type {
   Proposal,
   ProposalInput,
   Settings,
+  Recurrence,
 } from "../shared/types";
 import { parseProposal, parseTaskPatch } from "../shared/proposal";
 import { ScheduleService } from "./schedule-service";
+import { splitRecurringTask } from "../shared/recurrence";
 
 const now = () => new Date().toISOString();
 const id = () => randomUUID();
@@ -62,6 +64,7 @@ function text(value: unknown, max = 200): string {
 
 export class TaskService {
   readonly db: Database.Database;
+  private editingSeries = false;
   readonly schedules: ScheduleService;
   private activeProposal: string | null = null;
   constructor(readonly dbPath: string) {
@@ -81,9 +84,27 @@ export class TaskService {
       CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY,source_text TEXT NOT NULL,model_raw TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','applied','rejected','failed','undone')),idempotency_key TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS proposal_scopes(proposal_id TEXT PRIMARY KEY REFERENCES proposals(id),child_versions TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS proposal_created_lists(proposal_id TEXT NOT NULL REFERENCES proposals(id),list_id TEXT NOT NULL REFERENCES lists(id),snapshot_json TEXT NOT NULL,changed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(proposal_id,list_id));
+      CREATE TABLE IF NOT EXISTS proposal_created_recurrences(proposal_id TEXT NOT NULL REFERENCES proposals(id),series_id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id),snapshot_json TEXT NOT NULL,changed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS proposal_series_edits(proposal_id TEXT NOT NULL,task_id TEXT NOT NULL,before_json TEXT NOT NULL,after_json TEXT NOT NULL,PRIMARY KEY(proposal_id,task_id));
       CREATE TABLE IF NOT EXISTS audit_log(id TEXT PRIMARY KEY,at TEXT NOT NULL,action TEXT NOT NULL,entity TEXT NOT NULL,before_json TEXT,after_json TEXT,proposal_id TEXT,undo_of TEXT);
     `);
     this.schedules = new ScheduleService(this.db);
+    // Expanding a date window inserts untouched instances and does not invalidate
+    // undo. Actual edits/removal do, even if a user later restores the old values.
+    this.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS proposal_recurrence_updated AFTER UPDATE ON recurrences BEGIN
+        UPDATE proposal_created_recurrences SET changed=1 WHERE series_id=OLD.id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS proposal_recurrence_deleted AFTER DELETE ON recurrences BEGIN
+        UPDATE proposal_created_recurrences SET changed=1 WHERE series_id=OLD.id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS proposal_occurrence_updated AFTER UPDATE ON occurrences BEGIN
+        UPDATE proposal_created_recurrences SET changed=1 WHERE series_id=OLD.series_id;
+      END;
+      CREATE TRIGGER IF NOT EXISTS proposal_occurrence_deleted AFTER DELETE ON occurrences BEGIN
+        UPDATE proposal_created_recurrences SET changed=1 WHERE series_id=OLD.series_id;
+      END;
+    `);
     if (!this.db.prepare("SELECT id FROM lists LIMIT 1").get())
       this.db.transaction(() => {
         for (const [name, color] of [
@@ -467,12 +488,57 @@ export class TaskService {
       return value;
     })();
   }
+  private seriesState(taskId: string) {
+    const rule = this.schedules
+      .listRecurrences()
+      .find((r) => r.task_id === taskId);
+    return {
+      rule,
+      occurrences: rule
+        ? this.schedules
+            .listOccurrences()
+            .filter((o) => o.series_id === rule.id)
+        : [],
+    };
+  }
+  updateRecurring(
+    taskId: string,
+    version: number,
+    input: TaskPatch,
+    spec: unknown,
+  ): Task {
+    return this.db.transaction(() => {
+      const current = this.getTask(taskId);
+      this.assertVersion(current, version);
+      const old = this.schedules
+        .listRecurrences()
+        .find((r) => r.task_id === taskId);
+      if (!old) throw Error("Recurring task not found / 重复任务不存在");
+      const { task, recurrence } = splitRecurringTask({
+        ...current,
+        ...input,
+        ...(spec as object),
+      } as any);
+      recurrence.exdates = old.exdates;
+      const patch = parseTaskPatch(input);
+      this.editingSeries = true;
+      let updated: Task;
+      try {
+        updated = this.updateTask(taskId, version, patch);
+      } finally {
+        this.editingSeries = false;
+      }
+      this.schedules.replaceRecurrence(taskId, recurrence);
+      return updated;
+    })();
+  }
   updateTask(taskId: string, expectedVersion: number, input: TaskPatch): Task {
     return this.db.transaction(() => {
       const patch = parseTaskPatch(input);
       const before = this.getTask(taskId);
       this.assertVersion(before, expectedVersion);
       if (
+        !this.editingSeries &&
         this.db
           .prepare("SELECT 1 FROM recurrences WHERE task_id=?")
           .get(taskId) &&
@@ -589,6 +655,25 @@ export class TaskService {
         !listIds.has(action.patch.list_id)
       )
         throw new Error("List not found / 清单不存在或临时清单尚未定义");
+      if (action.type === "create_recurring") {
+        const { task } = splitRecurringTask(action.patch);
+        if (!task.list_id || !listIds.has(task.list_id))
+          throw new Error("List not found / 周期任务所属清单不存在");
+        continue;
+      }
+      if (action.type === "update_recurring") {
+        const current = this.getTask(action.target_id);
+        this.assertVersion(current, action.expected_version);
+        if (
+          !this.schedules
+            .listRecurrences()
+            .some((r) => r.task_id === current.id)
+        )
+          throw Error("Recurring task not found");
+        splitRecurringTask(action.patch);
+        if (!listIds.has(action.patch.list_id)) throw Error("List not found");
+        continue;
+      }
       if (action.type !== "create") {
         const target = this.getTask(action.target_id!);
         this.assertVersion(target, action.expected_version!);
@@ -628,7 +713,10 @@ export class TaskService {
     if (
       affected.size +
         value.actions.filter(
-          (a) => a.type === "create" || a.type === "add_subtask",
+          (a) =>
+            a.type === "create" ||
+            a.type === "create_recurring" ||
+            a.type === "add_subtask",
         ).length >
       50
     )
@@ -737,6 +825,39 @@ export class TaskService {
               .run(proposalId, list.id, JSON.stringify(list));
             continue;
           }
+          if (a.type === "create_recurring") {
+            const { task: patch, recurrence } = splitRecurringTask(a.patch);
+            if (patch.list_id && tempLists.has(patch.list_id))
+              patch.list_id = tempLists.get(patch.list_id);
+            const created = this.createTask(patch);
+            const series = this.schedules.setRecurrence(created.id, recurrence);
+            this.db
+              .prepare(
+                "INSERT INTO proposal_created_recurrences(proposal_id,series_id,task_id,snapshot_json) VALUES(?,?,?,?)",
+              )
+              .run(proposalId, series.id, created.id, JSON.stringify(series));
+            temp.set(a.temp_id, created.id);
+            continue;
+          }
+          if (a.type === "update_recurring") {
+            const before = this.seriesState(a.target_id);
+            const { task, recurrence } = splitRecurringTask(a.patch);
+            this.updateRecurring(
+              a.target_id,
+              a.expected_version,
+              task,
+              recurrence,
+            );
+            this.db
+              .prepare("INSERT INTO proposal_series_edits VALUES(?,?,?,?)")
+              .run(
+                proposalId,
+                a.target_id,
+                JSON.stringify(before),
+                JSON.stringify(this.seriesState(a.target_id)),
+              );
+            continue;
+          }
           const patch = { ...a.patch };
           if (patch.list_id && tempLists.has(patch.list_id))
             patch.list_id = tempLists.get(patch.list_id);
@@ -807,6 +928,16 @@ export class TaskService {
     if (proposal.status !== "applied")
       throw new Error("Only an applied proposal can be undone");
     this.db.transaction(() => {
+      const edits = this.db
+        .prepare("SELECT * FROM proposal_series_edits WHERE proposal_id=?")
+        .all(proposalId) as {
+        task_id: string;
+        before_json: string;
+        after_json: string;
+      }[];
+      for (const edit of edits)
+        if (JSON.stringify(this.seriesState(edit.task_id)) !== edit.after_json)
+          throw Error("Cannot undo: schedule changed / 日程已改变，无法撤销");
       const entries = this.db
         .prepare(
           "SELECT * FROM audit_log WHERE proposal_id=? AND undo_of IS NULL ORDER BY rowid DESC",
@@ -816,6 +947,47 @@ export class TaskService {
       for (const entry of entries)
         if (!last.has(entry.entity))
           last.set(entry.entity, JSON.parse(entry.after_json));
+      const createdSeries = this.db
+        .prepare(
+          "SELECT series_id,task_id,snapshot_json,changed FROM proposal_created_recurrences WHERE proposal_id=?",
+        )
+        .all(proposalId) as {
+        series_id: string;
+        task_id: string;
+        snapshot_json: string;
+        changed: number;
+      }[];
+      const currentSeries = this.schedules.listRecurrences();
+      for (const record of createdSeries) {
+        const expected = JSON.parse(record.snapshot_json) as Recurrence;
+        const current = currentSeries.find(
+          (series) => series.id === record.series_id,
+        );
+        if (
+          record.changed ||
+          !current ||
+          (Object.keys(expected) as (keyof Recurrence)[]).some(
+            (key) =>
+              JSON.stringify(current[key]) !== JSON.stringify(expected[key]),
+          )
+        )
+          throw new Error(
+            "Cannot undo: recurring task or schedule changed / 周期规则或实例已被修改，无法撤销此提案",
+          );
+        if (
+          this.db
+            .prepare(
+              `SELECT 1 FROM occurrences WHERE series_id=? AND (status!='todo' OR version!=1 OR override_date IS NOT NULL OR override_due_at IS NOT NULL OR completed_at IS NOT NULL OR reminder_override!='inherit' OR override_reminder_at IS NOT NULL) LIMIT 1`,
+            )
+            .get(record.series_id) ||
+          this.db
+            .prepare("SELECT 1 FROM occurrence_audit WHERE series_id=? LIMIT 1")
+            .get(record.series_id)
+        )
+          throw new Error(
+            "Cannot undo: recurring instances changed / 重复实例已被修改，无法撤销此提案",
+          );
+      }
       const createdLists = this.db
         .prepare(
           "SELECT list_id,snapshot_json,changed FROM proposal_created_lists WHERE proposal_id=?",
@@ -871,6 +1043,36 @@ export class TaskService {
           )
         )
           throw new Error("Cannot undo: new subtasks have been added");
+      }
+      for (const record of createdSeries)
+        this.schedules.removeRecurrence(record.task_id);
+      for (const edit of edits) {
+        const before = JSON.parse(edit.before_json);
+        const rule = before.rule;
+        this.db
+          .prepare("DELETE FROM occurrences WHERE series_id=?")
+          .run(rule.id);
+        this.db
+          .prepare(
+            "UPDATE recurrences SET rrule=?,dtstart=?,tzid=?,until=?,count=?,exdates=? WHERE id=?",
+          )
+          .run(
+            rule.rrule,
+            rule.dtstart,
+            rule.tzid,
+            rule.until,
+            rule.count,
+            JSON.stringify(rule.exdates),
+            rule.id,
+          );
+        for (const o of before.occurrences) {
+          const keys = Object.keys(o);
+          this.db
+            .prepare(
+              `INSERT INTO occurrences (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`,
+            )
+            .run(...keys.map((k) => o[k]));
+        }
       }
       for (const entry of entries) {
         const current = this.getTask(entry.entity, true);

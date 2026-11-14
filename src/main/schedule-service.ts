@@ -10,137 +10,14 @@ import {
   occurrenceReminderAt,
   type Clock,
 } from "../shared/dates";
-export type RecurrenceSpec = Omit<Recurrence, "id" | "task_id">;
+import { validateRecurrence } from "../shared/recurrence";
+export { validateRecurrence, type RecurrenceSpec } from "../shared/recurrence";
 export interface Reminder {
   taskId: string;
   title: string;
   body?: string;
   seriesId?: string;
   occurrenceKey?: string;
-}
-export function validateRecurrence(value: unknown): RecurrenceSpec {
-  if (!value || typeof value !== "object")
-    throw new Error("Invalid recurrence / 重复规则无效");
-  const v = value as Record<string, unknown>;
-  if (
-    typeof v.rrule !== "string" ||
-    v.rrule.length > 200 ||
-    typeof v.dtstart !== "string" ||
-    typeof v.tzid !== "string" ||
-    !validZone(v.tzid)
-  )
-    throw new Error("Invalid recurrence / 重复规则或时区无效");
-  const start = DateTime.fromISO(v.dtstart, { zone: v.tzid });
-  if (!start.isValid || !/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(v.dtstart))
-    throw new Error("Invalid recurrence start / 重复开始日期无效");
-  const parts = v.rrule
-      .toUpperCase()
-      .replace(/^RRULE:/, "")
-      .split(";"),
-    map: Record<string, string> = {};
-  for (const part of parts) {
-    const [k, val, ...rest] = part.split("=");
-    if (!val || rest.length || map[k] !== undefined)
-      throw new Error("Invalid recurrence rule");
-    map[k] = val;
-  }
-  const allowed = [
-    "FREQ",
-    "INTERVAL",
-    "BYDAY",
-    "BYMONTHDAY",
-    "BYSETPOS",
-    "COUNT",
-    "UNTIL",
-    "WKST",
-  ];
-  if (
-    Object.keys(map).some((k) => !allowed.includes(k)) ||
-    !["DAILY", "WEEKLY", "MONTHLY"].includes(map.FREQ)
-  )
-    throw new Error(
-      "Only daily, weekly and monthly recurrence is supported / 仅支持日、周、月重复",
-    );
-  if (map.INTERVAL && map.INTERVAL !== "1")
-    throw new Error("MVP recurrence interval must be 1");
-  if (map.WKST && map.WKST !== "MO") throw new Error("Week starts Monday");
-  if (
-    map.BYMONTHDAY &&
-    (!/^([1-9]|[12]\d|3[01])$/.test(map.BYMONTHDAY) ||
-      map.FREQ !== "MONTHLY" ||
-      map.BYDAY)
-  )
-    throw new Error("Choose one monthly day / 每月只能选一个日期");
-  if (
-    map.BYDAY &&
-    (!/^(?:[1-5]|-1)?(?:MO|TU|WE|TH|FR|SA|SU)(?:,(?:[1-5]|-1)?(?:MO|TU|WE|TH|FR|SA|SU))*$/.test(
-      map.BYDAY,
-    ) ||
-      map.FREQ === "DAILY" ||
-      (map.FREQ === "WEEKLY" && /[0-9]/.test(map.BYDAY)))
-  )
-    throw new Error("Invalid weekdays / 星期规则无效");
-  if (
-    map.BYSETPOS &&
-    (!/^(?:[1-5]|-1)$/.test(map.BYSETPOS) ||
-      map.FREQ !== "MONTHLY" ||
-      !map.BYDAY ||
-      /[0-9]/.test(map.BYDAY))
-  )
-    throw new Error("Invalid monthly weekday position");
-  if (map.FREQ === "MONTHLY" && map.BYDAY && map.BYDAY.split(",").length > 1)
-    throw new Error("Choose one monthly weekday");
-  if (
-    map.FREQ === "MONTHLY" &&
-    map.BYDAY &&
-    !/[0-9]/.test(map.BYDAY) &&
-    !map.BYSETPOS
-  )
-    throw new Error("Monthly weekday requires position");
-  let count = v.count ?? (map.COUNT ? Number(map.COUNT) : null),
-    until = v.until ?? null;
-  if (map.UNTIL) {
-    const d = DateTime.fromFormat(map.UNTIL, "yyyyMMdd'T'HHmmss'Z'", {
-      zone: "UTC",
-    });
-    const date = DateTime.fromFormat(map.UNTIL, "yyyyMMdd", { zone: v.tzid });
-    if (!d.isValid && !date.isValid) throw new Error("Invalid RRULE end date");
-    until = (d.isValid ? d.setZone(v.tzid) : date).toISODate();
-  }
-  if (
-    count !== null &&
-    (!Number.isInteger(count) || Number(count) < 1 || Number(count) > 10000)
-  )
-    throw new Error("Count must be 1–10000");
-  if (until !== null && (!validDate(until) || until < start.toISODate()!))
-    throw new Error("Invalid recurrence end date");
-  if (count !== null && until !== null)
-    throw new Error("Choose until or count, not both");
-  const exdates = v.exdates ?? [];
-  if (
-    !Array.isArray(exdates) ||
-    exdates.length > 10000 ||
-    exdates.some(
-      (x) =>
-        typeof x !== "string" ||
-        !DateTime.fromISO(x, { zone: v.tzid as string }).isValid,
-    )
-  )
-    throw new Error("Invalid excluded dates");
-  delete map.COUNT;
-  delete map.UNTIL;
-  const rrule = Object.entries(map)
-    .map(([k, x]) => `${k}=${x}`)
-    .join(";");
-  RRule.fromString(rrule);
-  return {
-    rrule,
-    dtstart: v.dtstart,
-    tzid: v.tzid,
-    until: until as string | null,
-    count: count as number | null,
-    exdates: exdates as string[],
-  };
 }
 export class ScheduleService {
   constructor(private db: Database.Database) {
@@ -222,6 +99,76 @@ export class ScheduleService {
         .run({ ...r, exdates: JSON.stringify(r.exdates) });
       this.materialize();
       return r;
+    })();
+  }
+  replaceRecurrence(taskId: string, value: unknown): Recurrence {
+    const spec = validateRecurrence(value);
+    const existing = this.listRecurrences().find((r) => r.task_id === taskId);
+    if (!existing) throw Error("Recurring task not found / 重复任务不存在");
+    if (
+      JSON.stringify({ ...existing, id: undefined, task_id: undefined }) ===
+      JSON.stringify(spec)
+    )
+      return existing;
+    return this.db.transaction(() => {
+      const today = DateTime.now().setZone(spec.tzid).toISODate()!;
+      const before = this.listOccurrences().filter(
+        (o) => o.series_id === existing.id,
+      );
+      const originalKeys = new Set(before.map((o) => o.occurrence_key));
+      const protectedDays = new Set(
+        before
+          .filter(
+            (o) =>
+              o.status !== "todo" ||
+              (o.version ?? 1) !== 1 ||
+              o.override_date ||
+              o.override_due_at ||
+              o.reminder_override === "explicit",
+          )
+          .map((o) => o.due_date),
+      );
+      // Keep completed, moved and individually edited history; regenerate untouched future dates.
+      this.db
+        .prepare(
+          "DELETE FROM occurrences WHERE series_id=? AND due_date>=? AND status='todo' AND version=1 AND override_date IS NULL AND override_due_at IS NULL AND reminder_override='inherit'",
+        )
+        .run(existing.id, today);
+      this.db
+        .prepare(
+          "UPDATE recurrences SET rrule=?,dtstart=?,tzid=?,until=?,count=?,exdates=? WHERE id=?",
+        )
+        .run(
+          spec.rrule,
+          spec.dtstart,
+          spec.tzid,
+          spec.until,
+          spec.count,
+          JSON.stringify(spec.exdates),
+          existing.id,
+        );
+      this.materialize();
+      for (const occurrence of this.listOccurrences().filter(
+        (o) => o.series_id === existing.id,
+      )) {
+        if (
+          !originalKeys.has(occurrence.occurrence_key) &&
+          (occurrence.due_date < today ||
+            protectedDays.has(occurrence.due_date))
+        ) {
+          spec.exdates.push(occurrence.occurrence_key);
+          this.db
+            .prepare(
+              "DELETE FROM occurrences WHERE series_id=? AND occurrence_key=?",
+            )
+            .run(existing.id, occurrence.occurrence_key);
+        }
+      }
+      spec.exdates = [...new Set(spec.exdates)];
+      this.db
+        .prepare("UPDATE recurrences SET exdates=? WHERE id=?")
+        .run(JSON.stringify(spec.exdates), existing.id);
+      return { ...spec, id: existing.id, task_id: taskId };
     })();
   }
   removeRecurrence(taskId: string): void {
@@ -424,14 +371,12 @@ export class ScheduleService {
           const requested = Array.isArray(opts.bymonthday)
             ? opts.bymonthday[0]
             : (opts.bymonthday ?? start.day);
-          const first = start
-            .startOf("month")
-            .set({
-              day: Math.min(requested, start.daysInMonth!),
-              hour: start.hour,
-              minute: start.minute,
-              second: start.second,
-            });
+          const first = start.startOf("month").set({
+            day: Math.min(requested, start.daysInMonth!),
+            hour: start.hour,
+            minute: start.minute,
+            second: start.second,
+          });
           const skippedFirst = first < start ? 1 : 0;
           for (
             let month = lo.startOf("month");

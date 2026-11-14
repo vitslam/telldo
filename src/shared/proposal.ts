@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DateTime, IANAZone } from "luxon";
 import type { ProposalInput, TaskPatch } from "./types";
+import { splitRecurringTask } from "./recurrence";
 
 export const MAX_ACTIONS = 50;
 const day = z
@@ -118,7 +119,66 @@ const createListActionSchema = z
       .strict(),
   })
   .strict();
-const actionSchema = z.union([taskActionSchema, createListActionSchema]);
+const recurringPatchSchema = taskPatchSchema
+  .extend({
+    title: z.string().trim().min(1).max(500),
+    list_id: z.string().min(1).max(200),
+    parent_id: z.null().optional(),
+    status: z.literal("todo").optional(),
+    due_kind: z.enum(["date", "datetime"]),
+    due_date: day,
+    rrule: z.string().min(1).max(200),
+    dtstart: z.string().min(1).max(80),
+    tzid: z
+      .string()
+      .refine((v) => IANAZone.isValidZone(v), "Invalid IANA time zone"),
+    until: day.nullable().optional(),
+    count: z.number().int().min(1).max(10000).nullable().optional(),
+  })
+  .superRefine((patch, ctx) => {
+    try {
+      splitRecurringTask(patch);
+    } catch (error) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          error instanceof Error ? error.message : "Invalid recurring task",
+      });
+    }
+  })
+  .transform((patch) => {
+    const { recurrence } = splitRecurringTask(patch);
+    return {
+      ...patch,
+      rrule: recurrence.rrule,
+      dtstart: recurrence.dtstart,
+      tzid: recurrence.tzid,
+      until: recurrence.until,
+      count: recurrence.count,
+    };
+  });
+const createRecurringActionSchema = z
+  .object({
+    type: z.literal("create_recurring"),
+    temp_id: z.string().min(1).max(200),
+    patch: recurringPatchSchema,
+  })
+  .strict();
+const updateRecurringActionSchema = z
+  .object({
+    type: z.literal("update_recurring"),
+    temp_id: z.never().optional(),
+    target_id: z.string().min(1).max(200),
+    expected_version: z.number().int().positive(),
+    patch: recurringPatchSchema,
+  })
+  .strict();
+const actionSchema = z.union([
+  updateRecurringActionSchema,
+  taskActionSchema,
+  createListActionSchema,
+  createRecurringActionSchema,
+]);
 export const proposalSchema = z
   .object({
     version: z.literal(1),
@@ -169,7 +229,11 @@ export function parseProposal(value: unknown): ProposalInput {
   }
   const result = proposalSchema.parse(value);
   const targets = result.actions.flatMap((a) =>
-    a.type === "create" || a.type === "create_list" ? [] : [a.target_id],
+    a.type === "create" ||
+    a.type === "create_list" ||
+    a.type === "create_recurring"
+      ? []
+      : [a.target_id],
   );
   if (new Set(targets).size !== targets.length)
     throw new Error("A proposal may change each existing task only once");
@@ -187,9 +251,11 @@ export function parseProposal(value: unknown): ProposalInput {
                 kind:
                   a.type === "create_list"
                     ? "list"
-                    : a.type === "create" || a.type === "add_subtask"
-                      ? "task"
-                      : "unused",
+                    : a.type === "create_recurring"
+                      ? "recurring_task"
+                      : a.type === "create" || a.type === "add_subtask"
+                        ? "task"
+                        : "unused",
               },
             ] as const,
           ]
@@ -198,7 +264,11 @@ export function parseProposal(value: unknown): ProposalInput {
   );
   for (const [index, action] of result.actions.entries()) {
     if (action.type === "create_list") continue;
-    if (action.target_id && definitions.has(action.target_id))
+    if (
+      action.type !== "create_recurring" &&
+      action.target_id &&
+      definitions.has(action.target_id)
+    )
       throw new Error(
         "An action target must be an existing task, not a temporary entity",
       );

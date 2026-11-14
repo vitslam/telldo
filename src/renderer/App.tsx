@@ -1,3 +1,4 @@
+import RecurringProposalDetails from "./RecurringProposalDetails";
 import ChatPage, { type ConversationMessage } from "./ChatPage";
 import type { AIProgress } from "../shared/ai-progress";
 import type { ChatReply } from "../shared/conversation";
@@ -65,6 +66,10 @@ const zh: Record<string, string> = {
   Close: "关闭",
   "Create list": "创建清单",
   "Create task": "创建待办",
+  "Create recurring task": "创建周期任务",
+  "Edit recurring task": "修改周期任务",
+  "Changes apply to this recurring task. Completed and individually edited dates are kept.":
+    "修改此重复任务，已完成和单独调整过的日期会保留。",
   "Update task": "更新待办",
   "Mark complete": "完成待办",
   "Reopen task": "恢复待办",
@@ -454,16 +459,29 @@ export default function App() {
         const instances = data!.occurrences.filter(
           (o) => o.series_id === series.id && o.status !== "skipped",
         );
-        for (const occurrence of instances)
+        const ordered = [...instances].sort((a, b) =>
+          (a.override_date || a.due_date).localeCompare(
+            b.override_date || b.due_date,
+          ),
+        );
+        const occurrence =
+          ordered.find(
+            (o) =>
+              o.status === "todo" &&
+              (o.override_date || o.due_date) === localDay(zone),
+          ) ||
+          ordered.find((o) => o.status === "todo") ||
+          ordered.at(-1);
+        if (occurrence)
           result.push({
             task: taskFromOccurrence(task, occurrence, series.tzid),
             occurrence,
           });
-        if (!instances.length) result.push({ task, template: true });
+        else result.push({ task, template: true });
       } else result.push({ task });
     }
     return result;
-  }, [data]);
+  }, [data, zone]);
   const rows = useMemo(
     () =>
       (search
@@ -760,9 +778,11 @@ export default function App() {
               <span>{list.name}</span>
               <small>
                 {
-                  allRows.filter(
-                    ({ task: t, template }) =>
-                      !template && t.list_id === list.id && t.status === "todo",
+                  tasks.filter(
+                    (t) =>
+                      !t.parent_id &&
+                      t.list_id === list.id &&
+                      t.status === "todo",
                   ).length
                 }
               </small>
@@ -1263,6 +1283,7 @@ export default function App() {
         <ProposalDialog
           proposal={proposal}
           aiBusy={busy}
+          isZh={isZh}
           onApplied={(applied) => {
             openConversation();
             void ask(applied);
@@ -1333,35 +1354,81 @@ function TaskDetail({
   const series = data.recurrences.find((r) => r.task_id === task.id),
     set = (key: keyof TaskPatch, value: unknown) =>
       setDraft((d) => ({ ...d, [key]: value }));
+  useEffect(() => {
+    if (!series) return;
+    const rule = Object.fromEntries(
+      series.rrule.split(";").map((x) => x.split("=")),
+    );
+    setRepeat(
+      rule.FREQ === "DAILY"
+        ? "daily"
+        : rule.FREQ === "WEEKLY"
+          ? rule.BYDAY === "MO,TU,WE,TH,FR"
+            ? "weekdays"
+            : "weekly"
+          : rule.BYDAY
+            ? "monthlyWeekday"
+            : "monthly",
+    );
+    setByday((rule.BYDAY || "MO").replace(/^-?\d/, ""));
+    setPosition(rule.BYSETPOS || rule.BYDAY?.match(/^(-?\d)/)?.[1] || "1");
+    setMonthday(
+      rule.BYMONTHDAY || String(DateTime.fromISO(series.dtstart).day),
+    );
+    setUntil(series.until || "");
+    setCount(series.count ? String(series.count) : "");
+  }, [series?.rrule, series?.until, series?.count]);
   const visibleOccurrences = data.occurrences.filter(
     (o) => o.series_id === series?.id,
   );
   const save = () =>
     act(
       () =>
-        api("updateTask", task.id, task.version, {
-          title: draft.title,
-          notes: draft.notes,
-          list_id: draft.list_id,
-          priority: draft.priority,
-          ...(!calendarDates
-            ? {
-                due_kind: draft.due_kind,
-                due_date: draft.due_kind === "none" ? null : draft.due_date,
-                due_at: draft.due_kind === "datetime" ? draft.due_at : null,
-                time_zone:
-                  draft.due_kind === "datetime"
-                    ? draft.time_zone || zone
-                    : null,
-                planned_date: draft.planned_date || null,
-                reminder_at: draft.reminder_at || null,
-              }
-            : {}),
-          tags: tagText
-            .split(/[,，]/)
-            .map((s) => s.trim())
-            .filter(Boolean),
-        }),
+        api(
+          series ? "updateRecurring" : "updateTask",
+          task.id,
+          task.version,
+          {
+            title: draft.title,
+            notes: draft.notes,
+            list_id: draft.list_id,
+            priority: draft.priority,
+            ...(!calendarDates
+              ? {
+                  due_kind: draft.due_kind,
+                  due_date: draft.due_kind === "none" ? null : draft.due_date,
+                  due_at: draft.due_kind === "datetime" ? draft.due_at : null,
+                  time_zone:
+                    draft.due_kind === "datetime"
+                      ? draft.time_zone || zone
+                      : null,
+                  planned_date: draft.planned_date || null,
+                  reminder_at: draft.reminder_at || null,
+                }
+              : {}),
+            tags: tagText
+              .split(/[,，]/)
+              .map((s) => s.trim())
+              .filter(Boolean),
+          },
+          ...(series
+            ? [
+                {
+                  rrule: series.rrule,
+                  dtstart:
+                    draft.due_kind === "datetime"
+                      ? DateTime.fromISO(draft.due_at!)
+                          .setZone(draft.time_zone || zone)
+                          .toFormat("yyyy-MM-dd'T'HH:mm:ss")
+                      : draft.due_date,
+                  tzid: draft.time_zone || series.tzid,
+                  until: series.until,
+                  count: series.count,
+                  exdates: series.exdates,
+                },
+              ]
+            : []),
+        ),
       "Saved",
     );
   async function setRecurring() {
@@ -1380,12 +1447,12 @@ function TaskDetail({
         api("setRecurrence", task.id, {
           rrule: rule,
           dtstart:
-            task.due_kind === "datetime"
-              ? DateTime.fromISO(task.due_at!)
-                  .setZone(task.time_zone || zone)
+            draft.due_kind === "datetime"
+              ? DateTime.fromISO(draft.due_at!)
+                  .setZone(draft.time_zone || zone)
                   .toFormat("yyyy-MM-dd'T'HH:mm:ss")
-              : task.due_date || localDay(zone),
-          tzid: task.time_zone || zone,
+              : draft.due_date || localDay(zone),
+          tzid: draft.time_zone || zone,
           until: until || null,
           count: count ? Number(count) : null,
           exdates: [],
@@ -1458,7 +1525,9 @@ function TaskDetail({
         </div>
         {series && (
           <p className="notice">
-            {t("Remove repeat before changing its date or time zone.")}
+            {t(
+              "Changes apply to this recurring task. Completed and individually edited dates are kept.",
+            )}
           </p>
         )}
         {calendarDates || (
@@ -1467,13 +1536,11 @@ function TaskDetail({
               {t("Natural date")}
               <div className="inline-input">
                 <input
-                  disabled={!!series}
                   placeholder="明天下午 3 点 / 下周五"
                   value={natural}
                   onChange={(e) => setNatural(e.target.value)}
                 />
                 <button
-                  disabled={!!series}
                   onClick={() =>
                     void act(async () => {
                       const parsed = await api<TaskPatch>("parseDate", natural);
@@ -1494,7 +1561,6 @@ function TaskDetail({
             <label>
               {t("Due date")}
               <select
-                disabled={!!series}
                 value={draft.due_kind}
                 onChange={(e) =>
                   setDraft((d) => ({
@@ -1511,7 +1577,6 @@ function TaskDetail({
             </label>
             {draft.due_kind === "date" && (
               <input
-                disabled={!!series}
                 type="date"
                 aria-label="Due calendar date"
                 value={draft.due_date || ""}
@@ -1523,7 +1588,6 @@ function TaskDetail({
                 <label>
                   {t("Date & time")}
                   <input
-                    disabled={!!series}
                     type="datetime-local"
                     value={
                       draft.due_at
@@ -1548,7 +1612,6 @@ function TaskDetail({
                 <label>
                   {t("Timezone (IANA)")}
                   <input
-                    disabled={!!series}
                     value={draft.time_zone || zone}
                     onChange={(e) =>
                       setDraft((d) => ({
@@ -2202,6 +2265,7 @@ function ProposalDialog({
   act,
   onApplied,
   aiBusy,
+  isZh,
 }: {
   proposal: Proposal;
   tasks: Task[];
@@ -2211,6 +2275,7 @@ function ProposalDialog({
   act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
   onApplied: (proposal: Proposal) => void;
   aiBusy: boolean;
+  isZh: boolean;
 }) {
   const [working, setWorking] = useState(false);
   const [operationError, setOperationError] = useState("");
@@ -2231,6 +2296,8 @@ function ProposalDialog({
   };
   const labels: Record<string, string> = {
     create_list: t("Create list"),
+    create_recurring: t("Create recurring task"),
+    update_recurring: t("Edit recurring task"),
     create: t("Create task"),
     update: t("Update task"),
     complete: t("Mark complete"),
@@ -2336,6 +2403,33 @@ function ProposalDialog({
                       {labels[action.type]}
                     </span>
                     <h3>{action.patch.name}</h3>
+                  </div>
+                </section>
+              );
+            if (
+              action.type === "create_recurring" ||
+              action.type === "update_recurring"
+            )
+              return (
+                <section
+                  className="proposal-change recurring-change"
+                  key={index}
+                >
+                  <div className="proposal-change-symbol">
+                    <Repeat2 size={19} />
+                  </div>
+                  <div className="proposal-change-content">
+                    <span className="proposal-action-label">
+                      {labels[action.type]}
+                    </span>
+                    <h3>{action.patch.title}</h3>
+                    <RecurringProposalDetails
+                      action={action}
+                      listName={
+                        listNames.get(action.patch.list_id) || t("Unknown list")
+                      }
+                      isZh={isZh}
+                    />
                   </div>
                 </section>
               );

@@ -3,7 +3,13 @@
   "title": "Telldo task and list proposal",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "summary", "idempotency_key", "risk", "actions"],
+  "required": [
+    "version",
+    "summary",
+    "idempotency_key",
+    "risk",
+    "actions"
+  ],
   "properties": {
     "version": {
       "type": "integer",
@@ -21,7 +27,10 @@
     },
     "risk": {
       "type": "string",
-      "enum": ["low", "high"]
+      "enum": [
+        "low",
+        "high"
+      ]
     },
     "actions": {
       "type": "array",
@@ -49,7 +58,9 @@
               "reschedule",
               "delete",
               "add_subtask",
-              "set_tags"
+              "set_tags",
+              "create_recurring",
+              "update_recurring"
             ]
           },
           "target_id": {
@@ -90,12 +101,15 @@
           },
           "patch": {
             "type": "array",
-            "description": "Changed fields only. create_list accepts name and optional color only. Task actions accept task fields only; list_id may reference an earlier create_list temp_id. Empty array for complete, uncomplete or delete. Null explicitly clears nullable task fields.",
-            "maxItems": 14,
+            "description": "Changed fields only. create_list accepts name and optional color only. Task actions accept task fields only; list_id may reference an earlier create_list temp_id. Empty array for complete, uncomplete or delete. Null explicitly clears nullable task fields. create_recurring combines task fields with rrule, dtstart, tzid, until or count. RRULE contains only the repeat pattern; end limits use separate until/count fields.",
+            "maxItems": 24,
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["key", "value"],
+              "required": [
+                "key",
+                "value"
+              ],
               "properties": {
                 "key": {
                   "type": "string",
@@ -115,7 +129,12 @@
                     "sort_order",
                     "tags",
                     "name",
-                    "color"
+                    "color",
+                    "rrule",
+                    "dtstart",
+                    "tzid",
+                    "until",
+                    "count"
                   ]
                 },
                 "value": {

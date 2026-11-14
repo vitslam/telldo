@@ -207,8 +207,25 @@ async function dispatch(method: string, args: any[]) {
       return service.deleteTask(args[0], args[1]);
     case "parseDate":
       return parseNaturalDate(args[0], zone());
-    case "setRecurrence":
-      return schedules.setRecurrence(args[0], args[1]);
+    case "updateRecurring":
+      return service.updateRecurring(args[0], args[1], args[2], args[3]);
+    case "setRecurrence": {
+      const existing = schedules
+        .listRecurrences()
+        .find((r) => r.task_id === args[0]);
+      if (!existing) return schedules.setRecurrence(args[0], args[1]);
+      const task = service.getTask(args[0]);
+      const start = DateTime.fromISO(args[1].dtstart, {
+        zone: args[1].tzid,
+      }).setZone(args[1].tzid);
+      const patch = {
+        due_kind: task.due_kind,
+        due_date: start.toISODate(),
+        due_at: task.due_kind === "datetime" ? start.toUTC().toISO() : null,
+        time_zone: task.due_kind === "datetime" ? args[1].tzid : null,
+      };
+      return service.updateRecurring(task.id, task.version, patch, args[1]);
+    }
     case "removeRecurrence":
       return schedules.removeRecurrence(args[0]);
     case "updateOccurrence":
@@ -282,7 +299,7 @@ async function dispatch(method: string, args: any[]) {
         const recurring = new Set(
           schedules.listRecurrences().map((r) => r.task_id),
         );
-        const tasks = all.filter((t) => !recurring.has(t.id));
+        const tasks = all;
         const relevant = tasks.filter((t) => text.includes(t.title));
         const chosen = [
           ...new Map(
@@ -299,6 +316,24 @@ async function dispatch(method: string, args: any[]) {
           .toISODate()!;
         schedules.materializeRange(from, to, zone());
         const series = schedules.listRecurrences();
+        const readOnlyRecurrences = series.flatMap((rule) => {
+          const task = all.find((task) => task.id === rule.task_id);
+          if (!task) return [];
+          return [
+            {
+              task_id: task.id,
+              expected_version: task.version,
+              title: task.title,
+              list_id: task.list_id,
+              rrule: rule.rrule,
+              dtstart: rule.dtstart,
+              tzid: rule.tzid,
+              until: rule.until,
+              count: rule.count,
+              reminder_at: task.reminder_at,
+            },
+          ];
+        });
         const instances = schedules
           .listOccurrences()
           .filter((o) => o.status !== "skipped")
@@ -334,6 +369,7 @@ async function dispatch(method: string, args: any[]) {
           text,
           {
             today: localDay(zone()),
+            now: DateTime.now().setZone(zone()).toISO(),
             timeZone: zone(),
             currentListId: args[1],
             lists: service.listLists().map(({ id, name }) => ({ id, name })),
@@ -353,6 +389,11 @@ async function dispatch(method: string, args: any[]) {
               ordinaryIncluded: chosen.length,
               includesSubtasks: true,
               recurringSeries: series.length,
+            },
+            readOnlyRecurrences: {
+              total: readOnlyRecurrences.length,
+              included: Math.min(readOnlyRecurrences.length, 100),
+              series: readOnlyRecurrences.slice(0, 100),
             },
             readOnlySchedule: {
               from,

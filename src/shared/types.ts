@@ -99,7 +99,41 @@ export interface CreateListAction {
   expected_version?: never;
   patch: { name: string; color?: string };
 }
-export type ProposalAction = TaskProposalAction | CreateListAction;
+export type RecurringTaskPatch = Omit<
+  TaskPatch,
+  "title" | "list_id" | "due_kind" | "due_date" | "parent_id" | "status"
+> & {
+  title: string;
+  list_id: string;
+  due_kind: "date" | "datetime";
+  due_date: string;
+  parent_id?: null;
+  status?: "todo";
+  rrule: string;
+  dtstart: string;
+  tzid: string;
+  until?: string | null;
+  count?: number | null;
+};
+export interface CreateRecurringAction {
+  type: "create_recurring";
+  temp_id: string;
+  target_id?: never;
+  expected_version?: never;
+  patch: RecurringTaskPatch;
+}
+export interface UpdateRecurringAction {
+  type: "update_recurring";
+  target_id: string;
+  expected_version: number;
+  temp_id?: never;
+  patch: RecurringTaskPatch;
+}
+export type ProposalAction =
+  | TaskProposalAction
+  | CreateListAction
+  | CreateRecurringAction
+  | UpdateRecurringAction;
 export interface ProposalInput {
   version: 1;
   summary: string;
