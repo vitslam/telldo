@@ -14,6 +14,9 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
+  CircleCheck,
+  CircleAlert,
+  Pause,
   ChevronDown,
   ShieldCheck,
   Zap,
@@ -31,6 +34,7 @@ import {
 } from "lucide-react";
 import type { ChatMessage, ChatSource } from "../shared/conversation";
 import type { AIActivity } from "../shared/ai-progress";
+import { activityPresentation } from "./activity-presentation";
 import type { Proposal } from "../shared/types";
 
 export interface DraftAttachment {
@@ -360,79 +364,113 @@ function Execution({
 }) {
   const [expanded, setExpanded] = useState<boolean | null>(null);
   const running = message.state === "working";
-  const activities = message.activities || [];
-  const lastResponse = [...activities]
-    .reverse()
-    .find((item) => item.phase === "response" && item.text);
-  const current = [...activities]
-    .reverse()
-    .find((item) => item.status === "running");
-  const elapsed =
-    message.finishedAt && message.startedAt
-      ? Math.max(1, Math.round((message.finishedAt - message.startedAt) / 1000))
-      : null;
+  const stopped = message.state === "cancelled";
+  const failed = !!message.error || message.state === "error";
+  // Keep public operations and replies; transport, model and validation are internal.
+  const activities = (message.activities || []).filter(item => {
+    const { kind } = activityPresentation(item);
+    return item.phase !== "connection" && kind !== "model" && kind !== "validation";
+  });
+  const lastResponse = [...activities].reverse().find(item => item.phase === "response" && item.text);
+  const current = [...activities].reverse().find(item => item.status === "running");
   const text = (zh: string, en: string) => (isZh ? zh : en);
+  const elapsed = message.finishedAt && message.startedAt
+    ? Math.max(1, Math.round((message.finishedAt - message.startedAt) / 1000))
+    : null;
+  const duration = elapsed === null ? null : elapsed < 60
+    ? text(`${elapsed} 秒`, `${elapsed}s`)
+    : text(`${Math.floor(elapsed / 60)} 分 ${elapsed % 60} 秒`, `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`);
   const heading = running
-    ? current?.label || text("正在准备", "Preparing")
-    : message.state === "cancelled"
-      ? text("已停止", "Stopped")
-      : message.error
-        ? text("未能完成", "Couldn't complete")
-        : text("处理完成", "Completed");
+    ? (current?.phase === "response" ? text("正在处理", "Working") : current?.label) || text("正在处理", "Working")
+    : stopped ? text("已停止", "Stopped")
+    : failed ? text("未能完成", "Couldn't complete")
+    : text("处理完成", "Completed");
   const isOpen = expanded ?? running;
+  const summary = activities.reduce<ReturnType<typeof activityPresentation>[]>((items, item) => {
+    const presentation = activityPresentation(item);
+    if (!["model", "response", "validation", "context"].includes(presentation.kind)
+      && !items.some(value => value.kind === presentation.kind)) items.push(presentation);
+    return items;
+  }, []).slice(0, 3);
   if (!activities.length && !running) return null;
   return (
-    <div className={`execution ${running ? "is-running" : ""}`}>
+    <div className={`execution ${running ? "is-running" : ""} ${failed ? "is-error" : ""}`}>
       <button
+        type="button"
         className="execution-toggle"
         aria-expanded={isOpen}
         aria-controls={`execution-${message.id}`}
         onClick={() => setExpanded(!isOpen)}
       >
-        {running ? (
-          <LoaderCircle size={13} className="spin" />
-        ) : message.error ? (
-          <X size={13} />
-        ) : message.state === "cancelled" ? (
-          <Square size={11} />
-        ) : (
-          <Check size={13} />
-        )}
-        <span>{heading}</span>
-        {elapsed && (
-          <span className="execution-time">
-            {elapsed}
-            {text(" 秒", "s")}
+        <span className="execution-overview-icon" aria-hidden="true">
+          {running ? <LoaderCircle size={15} className="spin" />
+            : stopped ? <Pause size={14} />
+            : failed ? <CircleAlert size={15} />
+            : <CircleCheck size={15} />}
+        </span>
+        <span className="execution-heading">{heading}</span>
+        {duration && <span className="execution-time">{duration}</span>}
+        {!isOpen && summary.length > 0 && (
+          <span className="execution-summary-icons" aria-hidden="true">
+            {summary.map(({ kind, Icon }) => <Icon key={kind} size={13} strokeWidth={1.7} />)}
           </span>
         )}
         <ChevronRight size={12} className={isOpen ? "is-open" : ""} />
       </button>
       {isOpen && (
-        <ol id={`execution-${message.id}`} className="execution-steps">
-          {activities.map((item) => (
-            <li key={item.id} className={item.status}>
-              {item.status === "completed" ? (
-                <Check size={12} />
-              ) : running ? (
-                <LoaderCircle size={12} className="spin" />
-              ) : (
-                <Circle size={10} />
-              )}
-              <div>
-                <span>{item.label}</span>
-                {item.detail && <p>{item.detail}</p>}
-                {item.text &&
-                  !(
-                    item === lastResponse &&
-                    item.text.trim() === message.content.trim()
-                  ) && (
-                    <div className="execution-reply">
-                      <ReplyText text={item.text} />
-                    </div>
+        <ol id={`execution-${message.id}`} className="execution-steps" aria-label={text("执行过程", "Activity") }>
+          {activities.map(item => {
+            const { kind, Icon } = activityPresentation(item);
+            const active = running && item.status === "running" && item === current;
+            const interrupted = !running && (stopped || failed) && item.status === "running";
+            const reply = item.text && !(item === lastResponse && item.text.trim() === message.content.trim())
+              ? item.text : null;
+            if (item.phase === "response") {
+              return reply ? (
+                <li key={item.id} className="execution-public-reply">
+                  <ReplyText text={reply} />
+                </li>
+              ) : null;
+            }
+            const search = /^search-\d+$/.test(item.id);
+            const count = item.detail?.match(/(?:^| · )找到 (\d+) 条，返回/)?.[1]
+              ?? item.detail?.match(/(?:^| · )(\d+) matches, \d+ returned/)?.[1];
+            const searchLabel = active ? text("正在搜索", "Searching") : item.status === "completed"
+              ? text("已搜索", "Searched") : text("搜索", "Search");
+            return (
+              <li key={item.id} className={`execution-step kind-${kind} ${active ? "is-active" : ""} ${reply ? "has-reply" : ""} ${interrupted ? "is-interrupted" : ""}`}>
+                <span className="execution-step-icon" aria-hidden="true">
+                  <Icon size={16} strokeWidth={1.65} />
+                  {active && <span className="execution-active-dot" />}
+                </span>
+                <div className="execution-step-content">
+                  {search ? (
+                    <details className="execution-search-details">
+                      <summary>
+                        <span>{searchLabel}</span>
+                        {item.status === "completed" && count !== undefined && (
+                          <span className="execution-search-count"> · {text(`找到 ${count} 条`, `${count} found`)}</span>
+                        )}
+                        {interrupted && <span className="execution-step-state"> · {stopped ? text("已停止", "Stopped") : text("未完成", "Incomplete")}</span>}
+                        <ChevronRight size={11} aria-hidden="true" />
+                      </summary>
+                      {item.detail && <p className="execution-step-detail">{item.detail}</p>}
+                    </details>
+                  ) : (
+                    <>
+                      <div className="execution-step-heading">
+                        <span className="execution-step-label">{item.label}</span>
+                        {active && <span className="execution-step-state">{text("进行中", "In progress")}</span>}
+                        {interrupted && <span className="execution-step-state">{stopped ? text("已停止", "Stopped") : text("未完成", "Incomplete")}</span>}
+                        {item.status === "completed" && <span className="execution-sr-only">{text("，已完成", ", completed")}</span>}
+                      </div>
+                      {item.detail && <p className="execution-step-detail">{item.detail}</p>}
+                    </>
                   )}
-              </div>
-            </li>
-          ))}
+                </div>
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>

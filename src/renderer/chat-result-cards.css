@@ -162,40 +162,25 @@
   color: var(--brand);
   background: transparent;
 }
-/* Public intermediate replies remain available when execution is expanded. */
-.execution-steps li > div {
-  min-width: 0;
-}
+/* Intermediate public replies read like conversation, not nested log cards. */
 .execution-reply {
-  margin: 10px 0 6px;
-  padding: 12px 15px;
-  border-left: 2px solid var(--border);
-  background: var(--subtle);
-  border-radius: 0 9px 9px 0;
+  margin: 8px 0 2px;
   max-width: 720px;
 }
 .execution-reply .reply-prose {
-  color: var(--secondary);
+  color: var(--text);
   font-size: 13px;
   line-height: 1.85;
 }
-.execution-reply .reply-prose p {
-  color: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  margin: 0;
-}
+.execution-reply .reply-prose p { margin: 0; }
 .execution-reply .reply-prose h3 {
   font-size: 13px;
   font-weight: 550;
-  margin: 0 0 6px;
+  margin: 12px 0 6px;
 }
-.execution-reply .reply-prose .reply-break {
-  height: 8px;
-}
-.execution-reply .reply-prose code {
-  font-size: 12px;
-}
+.execution-reply .reply-prose h3:first-child { margin-top: 0; }
+.execution-reply .reply-prose .reply-break { height: 8px; }
+.execution-reply .reply-prose code { font-size: 12px; }
 /* Permission is a persistent, lightweight choice next to the model. */
 .composer-permission {
   display: inline-flex;
