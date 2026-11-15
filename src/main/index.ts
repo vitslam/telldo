@@ -19,6 +19,7 @@ import {
   Tray,
   Menu,
   nativeImage,
+  nativeTheme,
   shell,
   protocol,
 } from "electron";
@@ -170,7 +171,13 @@ function createWindow() {
     height: 920,
     minWidth: 1024,
     minHeight: 700,
-    backgroundColor: "#f7f8fc",
+    backgroundColor: settings().appearance === "dark" ||
+      (settings().appearance !== "light" && nativeTheme.shouldUseDarkColors)
+      ? "#191919" : "#f5f5f5",
+    ...(process.platform === "darwin" ? {
+      titleBarStyle: "hiddenInset" as const,
+      trafficLightPosition: { x: 14, y: 10 },
+    } : {}),
     title: "Telldo",
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),

@@ -10,8 +10,6 @@ import {
   LoaderCircle,
   MoreHorizontal,
   NotebookPen,
-  MessageSquare,
-  List as ListIcon,
   Circle,
   Search,
   Sparkles,
@@ -80,19 +78,19 @@ function AttachmentTile({
       <button
         className={`memo-image ${compact ? "compact" : ""}`}
         onClick={() => onOpen(file)}
-        title={file.name}
-        aria-label={file.name}
+        title={compact ? undefined : file.name}
+        aria-label={compact ? "Open image" : file.name}
       >
         <img
           src={attachmentUrl(file)}
-          alt={file.name}
+          alt={compact ? "" : file.name}
           loading="lazy"
           onError={() => setFailed(true)}
         />
-        <span>
+        {!compact && <span>
           <ImageIcon size={12} />
           {file.name}
-        </span>
+        </span>}
       </button>
     );
   const ext = file.name.includes(".")
@@ -102,14 +100,15 @@ function AttachmentTile({
     <button
       className={`memo-file-tile ${compact ? "compact" : ""}`}
       onClick={() => onOpen(file)}
-      title={file.name}
+      title={compact ? undefined : file.name}
+      aria-label={compact ? `Open ${ext} file` : file.name}
     >
       <span className="memo-file-symbol">
         <FileText size={19} strokeWidth={1.5} />
         <small>{ext}</small>
       </span>
       <span className="memo-file-info">
-        <strong>{file.name}</strong>
+        <strong>{compact ? ext : file.name}</strong>
         <small>{size(file.bytes)}</small>
       </span>
       <ArrowUpRight size={14} />
@@ -610,13 +609,7 @@ export default function MemoPage({
               )}
             </p>
           </div>
-          {onCompose && (
-            <button className="memo-return-chat" onClick={onCompose}>
-              <MessageSquare size={15} />
-              {t("回到对话", "Back to conversation")}
-              <ArrowUpRight size={13} />
-            </button>
-          )}
+
         </header>
         <div
           className="timeline-scope"
@@ -785,15 +778,18 @@ export default function MemoPage({
                                 `Open ${record.task.title}`,
                               )}
                             >
-                              <span className="timeline-task-check">
+                              <span className="timeline-task-check" role="img" aria-label={record.task.status === "done" ? t("已完成", "Completed") : t("未完成", "Not completed")} title={record.task.status === "done" ? t("已完成", "Completed") : t("未完成", "Not completed")}>
                                 {record.task.status === "done" ? (
-                                  <Check size={16} />
+                                  <Check size={13} strokeWidth={1.8} />
                                 ) : (
-                                  <Circle size={16} />
+                                  <Circle size={12} strokeWidth={1.6} />
                                 )}
                               </span>
-                              <span>
-                                <h3>{record.task.title}</h3>
+                              <span className="timeline-task-text">
+                                <span className="timeline-task-heading">
+                                  <span className="timeline-task-list">{lists.find(list => list.id === record.task.list_id)?.name || t("清单", "List")}</span>
+                                  <h3>{record.task.title}</h3>
+                                </span>
                                 {record.task.notes && (
                                   <p>{record.task.notes}</p>
                                 )}
@@ -801,26 +797,7 @@ export default function MemoPage({
                               <ArrowUpRight size={14} />
                             </button>
                             {renderAttachments(record)}
-                            <div className="memo-entry-footer">
-                              <span
-                                className={`timeline-task-status ${record.task.status === "done" ? "done" : ""}`}
-                              >
-                                {record.task.status === "done" ? (
-                                  <CheckCheck size={12} />
-                                ) : (
-                                  <Circle size={11} />
-                                )}{" "}
-                                {record.task.status === "done"
-                                  ? t("已完成", "Completed")
-                                  : t("未完成", "Not completed")}
-                              </span>
-                              <span className="memo-entry-list">
-                                <ListIcon size={11} />
-                                {lists.find(
-                                  (list) => list.id === record.task.list_id,
-                                )?.name || t("清单", "List")}
-                              </span>
-                            </div>
+
                           </>
                         ) : (
                           <>
@@ -832,7 +809,7 @@ export default function MemoPage({
                                 `Open ${record.memo.title}`,
                               )}
                             >
-                              <h3>{record.memo.title}</h3>
+                              {!record.attachments.some(file => file.name === record.memo.title) && <h3>{record.memo.title}</h3>}
                               {record.memo.body &&
                                 record.memo.body.trim() !==
                                   record.memo.title && (
@@ -858,11 +835,7 @@ export default function MemoPage({
                                 )}
                             </button>
                             {renderAttachments(record)}
-                            <div className="memo-entry-footer">
-                              <span>
-                                <Sparkles size={11} />
-                                {t("来自对话", "From a conversation")}
-                              </span>
+                            {record.memo.analysis_state === "task" && record.memo.proposal_id && onReviewProposal && <div className="memo-entry-footer">
                               {record.memo.analysis_state === "task" &&
                                 record.memo.proposal_id &&
                                 onReviewProposal && (
@@ -877,14 +850,8 @@ export default function MemoPage({
                                     <ArrowUpRight size={12} />
                                   </button>
                                 )}
-                              <button
-                                className="memo-open-detail"
-                                onClick={() => openMemo(record.memo.id)}
-                                aria-label={t("查看详情", "View details")}
-                              >
-                                <MoreHorizontal size={15} />
-                              </button>
-                            </div>
+
+                            </div>}
                           </>
                         )}
                       </div>

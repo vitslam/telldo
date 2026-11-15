@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("telldo", {
+  platform: process.platform,
   invoke: (method: string, ...args: unknown[]) =>
     ipcRenderer.invoke("telldo:invoke", method, ...args),
   onEvent: (callback: (event: unknown) => void) => {

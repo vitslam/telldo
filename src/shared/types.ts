@@ -213,6 +213,7 @@ export interface Snapshot {
   capabilities: Capabilities | null;
 }
 export interface Bridge {
+  readonly platform: string;
   invoke<T = unknown>(method: string, ...args: unknown[]): Promise<T>;
   onEvent(
     callback: (event: { type: string; data: unknown }) => void,

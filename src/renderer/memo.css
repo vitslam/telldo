@@ -11,7 +11,7 @@
 }
 .memo-workspace {
   width: min(100%, 1000px);
-  padding: 39px 54px 72px;
+  padding: 26px 44px 56px;
   margin: 0 auto;
 }
 .memo-page-heading {
@@ -19,19 +19,19 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 28px;
+  margin-bottom: 18px;
 }
 .memo-eyebrow {
   font-size: 10px;
   color: var(--faint);
   letter-spacing: 1px;
   line-height: 1.6;
-  margin-bottom: 13px;
+  margin-bottom: 7px;
 }
 .memo-page-heading h1 {
-  font-size: 34px;
+  font-size: 28px;
   line-height: 1.3;
-  font-weight: 550;
+  font-weight: 400;
   letter-spacing: -0.9px;
   color: var(--text);
 }
@@ -71,7 +71,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  margin: 32px 0 25px;
+  margin: 16px 0 18px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 12px;
 }
@@ -89,7 +89,7 @@
 .memo-page .memo-filters button[aria-pressed="true"] {
   color: var(--text);
   background: var(--subtle);
-  font-weight: 550;
+  font-weight: 400;
 }
 .memo-page .memo-filters button:hover {
   color: var(--text);
@@ -174,12 +174,12 @@
 }
 .memo-day > h2 {
   font-size: 12px;
-  font-weight: 550;
+  font-weight: 400;
   color: var(--secondary);
   display: flex;
   align-items: baseline;
   gap: 11px;
-  padding: 0 0 14px 65px;
+  padding: 0 0 9px 65px;
   margin: 0;
   line-height: 1.65;
 }
@@ -191,7 +191,7 @@
 .memo-day-items {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 7px;
 }
 .memo-entry {
   display: grid;
@@ -203,7 +203,7 @@
   display: flex;
   align-items: center;
   flex-direction: column;
-  padding-top: 18px;
+  padding-top: 12px;
   position: relative;
 }
 .memo-time time {
@@ -225,18 +225,18 @@
 }
 .memo-entry-card {
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  border-radius: 12px;
-  background: var(--panel);
-  padding: 16px 18px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+  padding: 10px 12px;
   transition:
     border-color 0.15s,
     box-shadow 0.15s;
   overflow: hidden;
 }
 .memo-entry-card:hover {
-  border-color: color-mix(in srgb, var(--secondary) 42%, var(--border));
-  box-shadow: 0 2px 12px var(--shadow);
+  border-color: color-mix(in srgb, var(--border) 30%, transparent);
+  box-shadow: none;
 }
 .memo-page .memo-entry-copy {
   display: block;
@@ -251,9 +251,9 @@
   background: transparent;
 }
 .memo-entry-copy h3 {
-  margin: 0 0 7px;
+  margin: 0 0 4px;
   font-size: 14px;
-  font-weight: 550;
+  font-weight: 400;
   line-height: 1.65;
   overflow-wrap: anywhere;
   color: var(--text);
@@ -280,12 +280,12 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
-  margin-top: 13px;
+  margin-top: 8px;
   position: relative;
 }
 .memo-images.count-1 {
   grid-template-columns: minmax(0, 1fr);
-  max-width: 430px;
+  max-width: 400px;
 }
 .memo-images.count-2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -306,9 +306,9 @@
 .memo-image img {
   display: block;
   width: 100%;
-  max-height: 310px;
-  min-height: 130px;
-  object-fit: cover;
+  max-height: 230px;
+  min-height: 0;
+  object-fit: contain;
   transition: transform 0.2s ease-out;
 }
 .memo-images.count-2 .memo-image img,
@@ -567,7 +567,7 @@
   border-radius: 0;
   background: transparent;
   font-size: 28px;
-  font-weight: 550;
+  font-weight: 400;
   line-height: 1.5;
   letter-spacing: -0.6px;
   box-shadow: none;
@@ -900,7 +900,7 @@
   border-radius: 9px;
   background: var(--subtle);
   width: fit-content;
-  margin-top: 27px;
+  margin-top: 16px;
 }
 .memo-page .timeline-scope button {
   min-height: 30px;
@@ -920,13 +920,13 @@
   color: var(--text);
 }
 .memo-timeline-page .memo-collection-bar {
-  margin-top: 22px;
+  margin-top: 14px;
 }
 .memo-page .timeline-task-copy {
   width: 100%;
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 8px;
   padding: 0;
   text-align: left;
   color: var(--text);
@@ -940,25 +940,25 @@
   flex: 1;
 }
 .timeline-task-check {
-  width: 26px;
-  height: 26px;
+  width: 16px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   border-radius: 50%;
   color: var(--faint);
-  background: var(--subtle);
+  background: transparent;
   margin-top: 1px;
 }
 .timeline-task-copy.is-complete .timeline-task-check {
-  background: var(--tint);
+  background: transparent;
   color: var(--brand);
 }
 .timeline-task-copy h3 {
   font-size: 14px;
   line-height: 1.7;
-  font-weight: 550;
+  font-weight: 400;
   color: var(--text);
   margin: 0;
   overflow-wrap: anywhere;
@@ -992,7 +992,7 @@
 }
 .timeline-task .memo-images,
 .timeline-task .memo-entry-files {
-  margin-left: 38px;
+  margin-left: 24px;
 }
 .memo-entry-footer .timeline-task-status.done {
   color: var(--brand);
@@ -1401,3 +1401,27 @@ button.content-reference-main:hover {
 .memo-entry-card {
   cursor: pointer;
 }
+
+/* A single compact row carries status, list and title. */
+.timeline-task-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  min-width: 0;
+}
+.timeline-task-list {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.8;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memo-entry-copy:empty { display: none; }
+.memo-entry-card > .memo-images:first-child,
+.memo-entry-card > .memo-entry-files:first-child { margin-top: 0; }
+.memo-timeline-page .memo-file-info strong { font-weight: 400; }
+.memo-timeline-page .memo-day { margin-bottom: 22px; }

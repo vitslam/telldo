@@ -1988,3 +1988,121 @@ button.brand:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* A little more room for tasks, with the same rhythm across task views. */
+.content {
+  padding-top: 26px;
+  padding-bottom: 20px;
+}
+.view-heading { margin-bottom: 20px; }
+.eyebrow { margin-bottom: 8px; }
+.heading-line h1 {
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -1px;
+}
+.view-heading .view-description { margin-top: 7px; }
+.task-toolbar { margin-bottom: 9px; }
+.quick-add {
+  margin-bottom: 10px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.task-list:not(.calendar-list):has(.task-row) {
+  padding: 0 12px;
+  border-color: color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: 9px;
+}
+.task-list:not(.calendar-list) .task-row {
+  min-height: 50px;
+  padding: 10px 4px;
+  gap: 11px;
+  border-bottom-color: color-mix(in srgb, var(--border) 55%, transparent);
+}
+.task-list .task-title { font-size: 14px; font-weight: 400; }
+.task-list .task-meta { margin-top: 3px; gap: 8px; }
+.task-list:not(.calendar-list) .check-button,
+.calendar-list .check-button {
+  width: 16px;
+  height: 16px;
+  flex-basis: 16px;
+}
+.task-list .check-button > svg { width: 11px; height: 11px; }
+.planned-shell .content { padding: 20px 28px 0; }
+.planned-shell .view-heading { margin-bottom: 12px; }
+.planned-shell .heading-line h1 { font-size: 28px; }
+.planned-shell .view-description { margin-top: 4px; }
+.calendar-toolbar { margin-top: 0; margin-bottom: 8px; }
+.calendar-navigation > button { min-height: 28px; padding: 4px 7px; }
+.calendar-month-trigger { font-size: 16px; }
+.calendar-modes { padding: 2px; }
+.calendar-modes button { min-height: 27px; padding: 4px 9px; }
+.calendar-filters { margin-bottom: 9px; gap: 11px; }
+.calendar-filters select { min-height: 28px; padding-top: 4px; padding-bottom: 4px; }
+.calendar-filters > button { min-height: 28px; padding-top: 4px; padding-bottom: 4px; }
+.planned-layout { border-color: color-mix(in srgb, var(--border) 60%, transparent); }
+.calendar-list { padding: 4px 10px; }
+.calendar-list .task-row {
+  min-height: 54px;
+  padding: 9px 4px;
+  margin-bottom: 0;
+  gap: 11px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.calendar-list .task-row:last-child { border-bottom: 0; }
+.calendar-list .task-row:hover { background: var(--subtle); box-shadow: none; }
+.calendar-list .task-row.selected { background: var(--tint); box-shadow: none; }
+.calendar-legend { padding-top: 4px; padding-bottom: 4px; }
+
+/* The native macOS controls sit over a theme-colored, draggable surface. */
+:root { --sidebar-width: 216px; --window-titlebar-height: 36px; }
+.sidebar { width: var(--sidebar-width); }
+.window-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10;
+  width: var(--sidebar-width);
+  height: var(--window-titlebar-height);
+  background: var(--side);
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+  flex-shrink: 0;
+}
+:root[data-platform="darwin"] .app-shell {
+  height: 100vh;
+}
+:root[data-platform="darwin"] .loading {
+  height: 100vh;
+  min-height: 0;
+}
+@media (max-width: 1100px) {
+  :root { --sidebar-width: 190px; }
+}
+
+/* Share the native title area with each page's navigation and search. */
+:root[data-platform="darwin"] .sidebar {
+  padding-top: calc(32px + var(--window-titlebar-height));
+}
+:root[data-platform="darwin"] .topbar {
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+}
+:root[data-platform="darwin"] .topbar button,
+:root[data-platform="darwin"] .topbar input,
+:root[data-platform="darwin"] .topbar .search {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  user-select: auto;
+}
+@media (max-width: 1100px) {
+  :root[data-platform="darwin"] .sidebar {
+    padding-top: calc(28px + var(--window-titlebar-height));
+  }
+}
