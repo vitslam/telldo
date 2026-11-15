@@ -13,7 +13,7 @@ export class ModelRoundProgress {
     if (event.type === "response") {
       this.text = event.text;
       this.reply("running");
-      this.emit(event);
+      this.emit({ ...event, roundId: `model-${this.round}` });
     } else if (event.phase !== "connection") {
       this.emit({
         ...event,

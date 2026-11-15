@@ -1,3 +1,4 @@
+import { ProgressBatcher, type ProgressEnvelope } from "./progress-batcher";
 import DetailCardModal, { isTopmostOverlay } from "./DetailCardModal";
 import MemoPage from "./MemoPage";
 import type { Memo, MemoAttachment } from "../shared/memo";
@@ -7,7 +8,6 @@ import ChatPage, {
   type DraftAttachment,
   type ContentReference,
 } from "./ChatPage";
-import type { AIProgress } from "../shared/ai-progress";
 import type { ChatReply } from "../shared/conversation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import PlannedView from "./PlannedView";
@@ -379,6 +379,31 @@ export default function App() {
     });
   }, []);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const progressBuffer = useRef<ProgressBatcher | null>(null);
+  if (!progressBuffer.current)
+    progressBuffer.current = new ProgressBatcher((batch) => {
+      setMessages((items) =>
+        items.map((message) => {
+          if (message.id !== batch.requestId || message.state !== "working")
+            return message;
+          const activities = [...(message.activities || [])];
+          for (const activity of batch.activities) {
+            const index = activities.findIndex(
+              (item) => item.id === activity.id,
+            );
+            if (index >= 0)
+              activities[index] = { ...activities[index], ...activity };
+            else activities.push(activity);
+          }
+          return {
+            ...message,
+            ...(batch.response ? { content: batch.response.text } : {}),
+            ...(batch.activities.length ? { activities } : {}),
+          };
+        }),
+      );
+    });
+  useEffect(() => () => progressBuffer.current?.dispose(), []);
   const [cancelling, setCancelling] = useState(false);
   const activeRequest = useRef<string | null>(null);
   const cancelledRequest = useRef<string | null>(null);
@@ -472,34 +497,14 @@ export default function App() {
       if (event.type === "changed") void reload();
       if (event.type === "select") setSelected(String(event.data));
       if (event.type === "progress") {
-        const progress = event.data as Exclude<AIProgress, string> & {
-          requestId?: string;
-        };
+        const progress = event.data as ProgressEnvelope;
         if (
           !progress ||
           typeof progress !== "object" ||
           progress.requestId !== activeRequest.current
         )
           return;
-        setMessages((items) =>
-          items.map((message) => {
-            if (
-              message.id !== progress.requestId ||
-              message.state !== "working"
-            )
-              return message;
-            if (progress.type === "response")
-              return { ...message, content: progress.text };
-            if (progress.type !== "activity") return message;
-            const activities = [...(message.activities || [])];
-            const index = activities.findIndex(
-              (item) => item.id === progress.id,
-            );
-            if (index >= 0) activities[index] = progress;
-            else activities.push(progress);
-            return { ...message, activities };
-          }),
-        );
+        progressBuffer.current?.push(progress);
       }
     });
   }, []);
@@ -722,6 +727,7 @@ export default function App() {
     asking.current = true;
     const requestId = crypto.randomUUID();
     activeRequest.current = requestId;
+    progressBuffer.current?.begin(requestId);
     cancelledRequest.current = null;
     setBusy(true);
     setCancelling(false);
@@ -859,6 +865,7 @@ export default function App() {
         },
       );
       retryCapture.current = null;
+      progressBuffer.current?.finish(requestId);
       setMessages((items) =>
         items.map((m) =>
           m.id === requestId
@@ -887,6 +894,7 @@ export default function App() {
       );
       void reload().catch((e) => setError(String(e)));
     } catch (e) {
+      progressBuffer.current?.finish(requestId);
       const cancelled = cancelledRequest.current === requestId;
       const notice = cancelled
         ? isZh
@@ -914,6 +922,7 @@ export default function App() {
         setReferences((draft) => (draft.length ? draft : sendingReferences));
       }
     } finally {
+      progressBuffer.current?.finish(requestId);
       activeRequest.current = null;
       asking.current = false;
       setBusy(false);

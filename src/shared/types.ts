@@ -184,6 +184,8 @@ export interface Settings {
   closeToTray: boolean;
 }
 export interface Capabilities {
+  appServer?: boolean;
+  streaming?: boolean;
   available: boolean;
   version: string;
   path: string;

@@ -423,7 +423,6 @@ function Execution({
                 {item.detail && <p>{item.detail}</p>}
                 {item.text &&
                   !(
-                    !running &&
                     item === lastResponse &&
                     item.text.trim() === message.content.trim()
                   ) && (
@@ -555,7 +554,7 @@ export default function ChatPage({
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
   }, [speech, inputRef, visible]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!visible) return;
     const lastUser = messages.filter((m) => m.role === "user").at(-1)?.id || "";
     if (lastUser !== previousUser.current) {
@@ -641,11 +640,12 @@ export default function ChatPage({
         onScroll={() => {
           if (!visible) return;
           const element = scroll.current!;
-          const away =
-            element.scrollHeight - element.scrollTop - element.clientHeight >
-            90;
-          stickToBottom.current = !away;
-          setAwayFromBottom(away);
+          const distance =
+            element.scrollHeight - element.scrollTop - element.clientHeight;
+          // A small upward scroll pauses following; the jump-to-latest control
+          // appears only once the reader is meaningfully away from the end.
+          stickToBottom.current = distance <= 6;
+          setAwayFromBottom(distance > 90);
         }}
       >
         <div className="chat-thread">

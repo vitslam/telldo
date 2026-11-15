@@ -27,10 +27,49 @@ if args==['exec','--help']:
  flags+=['--json','--sandbox read-only','--ignore-user-config','--ignore-rules','--ephemeral','--skip-git-repo-check']
  if os.environ.get('FAKE_FALLBACK')!='yes':flags+=['--output-schema FILE','--output-last-message FILE']
  print('\n'.join(flags));sys.exit(0)
+if args==['app-server','--help']:
+ print('--listen stdio://' if os.environ.get('FAKE_NATIVE')=='yes' else 'unsupported');sys.exit(0 if os.environ.get('FAKE_NATIVE')=='yes' else 1)
 if args==['login','--help']:
  print('Commands: status');sys.exit(0)
 if args==['login','status']:
  print('Not logged in' if behavior=='auth' else 'Logged in');sys.exit(1 if behavior=='auth' else 0)
+if args[:1]==['app-server']:
+ trace={'argv':args,'cwd':os.getcwd(),'files':sorted(os.listdir('.')),'proxy':os.environ.get('https_proxy'),'images':[],'requests':[]}
+ pathlib.Path(os.environ['FAKE_TRACE']).write_text(json.dumps(trace))
+ if behavior=='hang':
+  code="import time,pathlib;time.sleep(1.2);pathlib.Path("+repr(os.environ['FAKE_MARKER'])+").write_text('orphan')"
+  subprocess.Popen([sys.executable,'-c',code])
+  while True:time.sleep(.05)
+ def emit(value):print(json.dumps(value),flush=True)
+ def event(method,**params):emit({'method':method,'params':params})
+ for line in sys.stdin:
+  message=json.loads(line);trace['requests'].append(message)
+  pathlib.Path(os.environ['FAKE_TRACE']).write_text(json.dumps(trace))
+  if message['method']=='initialize':
+   event('mcpServer/startupStatus/updated',threadId=None,name='PRIVATE MCP NAME',status='ready',error=None,failureReason=None)
+   emit({'id':1,'result':{'userAgent':'fake'}})
+  elif message['method']=='thread/start':emit({'id':2,'result':{'thread':{'id':'thread-1'}}})
+  elif message['method']=='turn/start':
+   trace['images']=[{'path':i['path'],'base64':base64.b64encode(pathlib.Path(i['path']).read_bytes()).decode('ascii')} for i in message['params']['input'] if i['type']=='localImage']
+   pathlib.Path(os.environ['FAKE_TRACE']).write_text(json.dumps(trace))
+   emit({'id':3,'result':{'turn':{'id':'turn-1'}}})
+   event('turn/started',threadId='thread-1',turn={'id':'turn-1'})
+   if behavior=='tool':emit({'id':99,'method':'item/commandExecution/requestApproval','params':{}});time.sleep(10)
+   if behavior=='mcp':event('item/started',threadId='thread-1',turnId='turn-1',item={'type':'mcpToolCall','id':'tool'});time.sleep(10)
+   if behavior=='nativecameltool':event('item/started',threadId='thread-1',turnId='turn-1',item={'type':'commandExecution','id':'tool'});time.sleep(10)
+   if behavior=='nativewrongid':emit({'id':55,'result':{}});time.sleep(10)
+   if behavior=='nativefailed':event('turn/completed',threadId='thread-1',turn={'id':'turn-1','status':'failed','error':{'message':'network failure'}});time.sleep(10)
+   event('item/started',threadId='thread-1',turnId='turn-1',item={'type':'reasoning','id':'reason','text':'PRIVATE REASONING'})
+   event('item/reasoning/textDelta',threadId='thread-1',turnId='turn-1',itemId='reason',delta='PRIVATE REASONING')
+   event('item/started',threadId='thread-1',turnId='turn-1',item={'type':'agentMessage','id':'answer'})
+   raw=os.environ['FAKE_PROPOSAL'] if behavior!='badfinal' else '```json\n{}\n```'
+   for char in raw:
+    event('item/agentMessage/delta',threadId='wrong' if behavior=='nativewrongthread' else 'thread-1',turnId='turn-1',itemId='answer',delta=char)
+    if behavior=='nativeslow':time.sleep(.001)
+   event('item/completed',threadId='thread-1',turnId='turn-1',item={'type':'agentMessage','id':'answer','text':raw,'phase':'final_answer'})
+   event('turn/completed',threadId='thread-1',turn={'id':'turn-1','status':'completed'})
+   while True:time.sleep(.05)
+ sys.exit(0)
 trace={'argv':args,'cwd':os.getcwd(),'files':sorted(os.listdir('.')),'proxy':os.environ.get('https_proxy'),'images':[{'path':args[i+1],'base64':base64.b64encode(pathlib.Path(args[i+1]).read_bytes()).decode('ascii')} for i,arg in enumerate(args) if arg=='--image']}
 pathlib.Path(os.environ['FAKE_TRACE']).write_text(json.dumps(trace))
 if behavior=='hang':
@@ -65,7 +104,10 @@ class Running:
         self.stdout, self.stderr = [], []
         self.readers = []
         for stream, target in ((process.stdout, self.stdout), (process.stderr, self.stderr)):
-            thread = threading.Thread(target=lambda s=stream, t=target: t.extend(s.readlines()), daemon=True)
+            def read_lines(s=stream, t=target):
+                for line in s:
+                    t.append(line)
+            thread = threading.Thread(target=read_lines, daemon=True)
             thread.start()
             self.readers.append(thread)
 
@@ -100,14 +142,15 @@ class SSHRunnerTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:running.process.kill();running.process.wait()
         self.temp.cleanup()
 
-    def start(self, behavior="success", mode="run", fallback=False, timeout=3000, prompt=None, codex_path=None, images=None, no_image=False):
+    def start(self, behavior="success", mode="run", fallback=False, timeout=3000, prompt=None, codex_path=None, images=None, no_image=False, native=False, proposal=None, response_deltas=True):
         env = dict(os.environ, PATH=str(self.root), FAKE_BEHAVIOR=behavior, FAKE_FALLBACK="yes" if fallback else "no",
-                   FAKE_NO_IMAGE="yes" if no_image else "no", FAKE_TRACE=str(self.trace), FAKE_MARKER=str(self.marker), FAKE_PROPOSAL=json.dumps(PROPOSAL))
+                   FAKE_NATIVE="yes" if native else "no", FAKE_NO_IMAGE="yes" if no_image else "no", FAKE_TRACE=str(self.trace), FAKE_MARKER=str(self.marker), FAKE_PROPOSAL=json.dumps(proposal or PROPOSAL))
         process = subprocess.Popen([sys.executable, "-I", str(RUNNER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         running = Running(process)
         self.running.append(running)
         request = dict(version=1, mode=mode, codexPath=str(self.fake) if codex_path is None else codex_path, proxyUrl="http://192.0.2.10:3128", timeoutMs=timeout,
                        prompt=prompt or "Create a task. Do not use tools. $(touch NEVER) `touch NEVER2`", schema=json.dumps({"type": "object"}))
+        if response_deltas is not None: request["responseDeltas"] = response_deltas
         if images is not None: request["images"] = images
         process.stdin.write(json.dumps(request) + "\n")
         process.stdin.flush()
@@ -118,6 +161,93 @@ class SSHRunnerTests(unittest.TestCase):
         while not self.trace.exists() and time.monotonic() < deadline:
             time.sleep(.02)
         self.assertTrue(self.trace.exists(), "fake Codex execution did not start")
+
+    def test_native_probe_advertises_real_streaming(self):
+        code, frames = self.start(mode="probe", native=True).finish()
+        self.assertEqual(code, 0)
+        self.assertTrue(frames[-1]["capabilities"]["appServer"])
+        self.assertTrue(frames[-1]["capabilities"]["streaming"])
+        self.assertIn("ephemeral", frames[-1]["capabilities"]["isolation"])
+
+    def test_native_true_deltas_survive_over_100_unicode_fragments_without_reasoning(self):
+        proposal = dict(PROPOSAL, summary="每个字😀都能实时到达" + "字" * 150)
+        running = self.start(native=True, behavior="nativeslow", proposal=proposal)
+        self.wait_started()
+        deadline = time.monotonic() + 3
+        while not any('"delta"' in line for line in running.stdout) and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertTrue(any('"delta"' in line for line in running.stdout), "No live delta before completion")
+        self.assertIsNone(running.process.poll(), "Stream arrived only after process completion")
+        code, frames = running.finish()
+        self.assertEqual(code, 0)
+        events = [frame["event"] for frame in frames if frame["type"] == "progress"]
+        replies = [event for event in events if event["type"] == "response"]
+        self.assertGreater(len(replies), 100)
+        text = ""
+        for event in replies: text = event["text"] if "text" in event else text + event["delta"]
+        self.assertEqual(text, proposal["summary"])
+        self.assertNotIn("PRIVATE", json.dumps(events))
+        self.assertNotIn("idempotency_key", json.dumps(events))
+        self.assertEqual(json.loads(frames[-1]["raw"]), proposal)
+        self.assertLess(sum(len(json.dumps(frame).encode()) for frame in frames), 100000)
+        trace = json.loads(self.trace.read_text())
+        thread = next(r["params"] for r in trace["requests"] if r["method"] == "thread/start")
+        self.assertIn("--disable", trace["argv"])
+        self.assertIn("hooks", trace["argv"])
+        self.assertIn("project_doc_max_bytes=0", trace["argv"])
+        self.assertEqual(thread["sandbox"], "read-only")
+        self.assertEqual(thread["approvalPolicy"], "never")
+        self.assertTrue(thread["ephemeral"])
+        turn = next(r["params"] for r in trace["requests"] if r["method"] == "turn/start")
+        self.assertEqual(turn["outputSchema"], {"type":"object"})
+        self.assertFalse(Path(trace["cwd"]).exists())
+
+    def test_legacy_clients_receive_cumulative_text_without_delta_negotiation(self):
+        for negotiated in (None, False):
+            with self.subTest(response_deltas=negotiated):
+                code, frames = self.start(native=True, response_deltas=negotiated).finish()
+                self.assertEqual(code, 0)
+                replies = [frame["event"] for frame in frames if frame["type"] == "progress" and frame["event"]["type"] == "response"]
+                self.assertTrue(replies)
+                self.assertTrue(all("text" in event and "delta" not in event for event in replies))
+                self.assertEqual(replies[-1]["text"], PROPOSAL["summary"])
+
+    def test_legacy_snapshot_batches_still_deliver_the_short_final_suffix(self):
+        summary = "保留旧客户端" * 20 + "最后"
+        code, frames = self.start(native=True, response_deltas=False, proposal=dict(PROPOSAL, summary=summary)).finish()
+        self.assertEqual(code, 0)
+        replies = [frame["event"] for frame in frames if frame["type"] == "progress" and frame["event"]["type"] == "response"]
+        self.assertLessEqual(len(replies), len(summary) // 24 + 1)
+        self.assertEqual(replies[-1]["text"], summary)
+        self.assertTrue(all("delta" not in event for event in replies))
+
+    def test_native_local_images_reach_model_and_are_cleaned(self):
+        image = self.image()
+        code, frames = self.start(native=True, images=[image]).finish()
+        self.assertEqual(code, 0)
+        trace = json.loads(self.trace.read_text())
+        self.assertEqual(trace["images"][0]["base64"], image["base64"])
+        self.assertFalse(Path(trace["images"][0]["path"]).exists())
+
+    def test_native_errors_tools_and_wrong_scope_never_return_proposal(self):
+        for behavior in ("tool", "mcp", "nativecameltool", "nativewrongid", "nativewrongthread", "nativefailed", "badfinal"):
+            with self.subTest(behavior=behavior):
+                code, frames = self.start(native=True, behavior=behavior).finish()
+                self.assertNotEqual(code, 0)
+                self.assertFalse(any(frame["type"] == "proposal" for frame in frames))
+
+    def test_native_disconnect_and_timeout_kill_entire_group(self):
+        for cancel in (True, False):
+            with self.subTest(cancel=cancel):
+                if self.trace.exists(): self.trace.unlink()
+                running = self.start(native=True, behavior="hang", timeout=3000 if cancel else 650)
+                self.wait_started()
+                if cancel: running.process.stdin.close()
+                code, frames = running.finish()
+                self.assertNotEqual(code, 0)
+                self.assertEqual(frames[-1]["code"], "cancelled" if cancel else "timeout")
+                time.sleep(1.3)
+                self.assertFalse(self.marker.exists())
 
     def test_probe_real_help_flags_and_login(self):
         code, frames = self.start(mode="probe").finish()
@@ -145,7 +275,11 @@ class SSHRunnerTests(unittest.TestCase):
         text = json.dumps(progress)
         self.assertNotIn("PRIVATE REASONING", text)
         self.assertNotIn("idempotency_key", text)
-        replies = [event["text"] for event in progress if event["type"] == "response"]
+        replies, current = [], ""
+        for event in progress:
+            if event["type"] != "response": continue
+            current = event["text"] if "text" in event else current + event["delta"]
+            replies.append(current)
         self.assertEqual(replies, ["This is a sufficiently long partial answer", PROPOSAL["summary"]])
         self.assertTrue(any(event.get("phase") == "model" and event.get("status") == "completed" for event in progress))
 

@@ -92,6 +92,10 @@ function harness(
           end(options.help ?? HELP);
           return;
         }
+        if (args[0] === "app-server" && args[1] === "--help") {
+          end("unsupported", 1);
+          return;
+        }
         if (args[0] === "login" && args[1] === "--help") {
           end("Commands: status Show login status");
           return;
@@ -229,6 +233,7 @@ describe("Codex adapter capability probing and process boundary", () => {
     expect(calls.map((c) => c.args)).toEqual([
       ["--version"],
       ["exec", "--help"],
+      ["app-server", "--help"],
       ["login", "--help"],
       ["login", "status"],
     ]);

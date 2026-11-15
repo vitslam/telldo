@@ -1,10 +1,7 @@
+import { SshProgressDecoder } from "./ssh-response-stream";
 import type { AIInputAttachment } from "../shared/ai-input";
 import { prepareAIInputs, ATTACHMENT_INPUT_NOTE } from "./attachment-input";
-import {
-  aiActivity,
-  parseAIProgress,
-  type AIProgress,
-} from "../shared/ai-progress";
+import { aiActivity, type AIProgress } from "../shared/ai-progress";
 import { conversationContext } from "../shared/conversation";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -187,6 +184,9 @@ function checkedCapabilities(value: any): Capabilities {
   for (const key of ["version", "path", "reason", "isolation"])
     if (typeof value[key] !== "string")
       throw new Error("Invalid remote capability response.");
+  for (const key of ["appServer", "streaming"])
+    if (value[key] !== undefined && typeof value[key] !== "boolean")
+      throw new Error("Invalid remote streaming capability.");
   const caps = { ...UNAVAILABLE, ...value } as Capabilities;
   if (caps.available && (!caps.loggedIn || !caps.json || !caps.readOnly))
     throw new Error(
@@ -267,6 +267,7 @@ export class SshCodexAdapter {
         raw: string | undefined,
         killTimer: ReturnType<typeof setTimeout> | undefined;
       const decoder = new StringDecoder("utf8");
+      const progressDecoder = new SshProgressDecoder();
       const timer = setTimeout(
         () =>
           cancel(
@@ -309,7 +310,7 @@ export class SshCodexAdapter {
           return;
         }
         if (frame.type === "progress" && frame.event !== undefined) {
-          const progress = parseAIProgress(frame.event);
+          const progress = progressDecoder.decode(frame.event);
           if (progress) onProgress(progress);
           else
             cancel(
@@ -503,6 +504,7 @@ export class SshCodexAdapter {
       const result = await this.exchange(
         {
           mode: "run",
+          responseDeltas: true,
           timeoutMs,
           prompt,
           schema,

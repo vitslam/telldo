@@ -62,10 +62,10 @@ class PublicProgress:
     """Forward observable execution stages and answer summary only, never reasoning."""
     LABELS = {"connection": "连接 Codex", "model": "处理请求", "response": "生成回复"}
 
-    def __init__(self):
+    def __init__(self, delta_mode=False):
+        self.delta_mode = delta_mode
         self.states = {}
         self.preview = ""
-        self.preview_count = 0
 
     def activity(self, phase, status, detail=None):
         if self.states.get(phase) == status:
@@ -78,13 +78,18 @@ class PublicProgress:
 
     def summary(self, raw, complete=False):
         text = summary_prefix(raw)
-        if not text or text == self.preview or self.preview_count >= 100:
+        if not text or text == self.preview:
             return
-        if not complete and len(text) - len(self.preview) < 24:
+        # Older desktop builds accept cumulative snapshots; keep their wire volume bounded.
+        if not self.delta_mode and not complete and len(text) - len(self.preview) < 24:
             return
+        event = dict(type="response")
+        if self.delta_mode and text.startswith(self.preview):
+            event["delta"] = text[len(self.preview):]
+        else:
+            event["text"] = text
         self.preview = text
-        self.preview_count += 1
-        emit("progress", event=dict(type="response", text=text))
+        emit("progress", event=event)
 
     def consume(self, event):
         kind, item = event.get("type"), event.get("item", {})
@@ -310,14 +315,228 @@ class Runtime:
         caps.update(version=version.strip()[:200], imageInput=has("--image"), schema=has("--output-schema"), outputFile=has("--output-last-message"),
                     json=has("--json"), readOnly=has("--sandbox") and "read-only" in help_text,
                     ignoreUserConfig=has("--ignore-user-config"), ignoreRules=has("--ignore-rules"), ephemeral=has("--ephemeral"), skipGitCheck=has("--skip-git-repo-check"))
+        code, native_help, error = self.command(path, ["app-server", "--help"], cwd)
+        caps["appServer"] = code == 0 and "--listen" in native_help + error
+        caps["streaming"] = caps["appServer"]
         code, login_help, error = self.command(path, ["login", "--help"], cwd)
         if code == 0 and re.search(r"\bstatus\b", login_help + error):
             code, _, _ = self.command(path, ["login", "status"], cwd)
             caps["loggedIn"] = code == 0
         caps["available"] = caps["loggedIn"] and caps["json"] and caps["readOnly"]
         caps["reason"] = ("" if caps["available"] else "Remote Codex needs login and support for JSON events plus a read-only sandbox. / 远端 Codex 需登录，并支持 JSON 事件与只读沙箱。")
+        if caps["appServer"]:
+            caps["isolation"] = "App-server: read-only sandbox, approvals never, ephemeral thread, temporary cwd. User config/rules are not claimed ignored; observed tools and server requests fail the request. / 原生增量模式：只读沙箱、临时会话；检测到工具或服务器请求即中止。"
+            return caps
         caps["isolation"] = "Read-only: %s; ignore user config: %s; ignore rules: %s. No forced no-shell/MCP/network guarantee. Observed tool calls fail the request. / 不保证强制无工具隔离；检测到工具调用即失败。" % (caps["readOnly"], caps["ignoreUserConfig"], caps["ignoreRules"])
         return caps
+
+    def run_native(self, path, cwd, prompt, schema, images):
+        """One ephemeral native turn. Real deltas are decoded before crossing SSH."""
+        args = [path, "app-server", "--listen", "stdio://"]
+        for feature in ("shell_tool", "hooks", "apps", "browser_use", "computer_use"):
+            args.extend(["--disable", feature])
+        args.extend(["-c", "mcp_servers={}", "-c", 'web_search="disabled"', "-c", "project_doc_max_bytes=0"])
+        child = self.spawn(args, cwd)
+        progress = PublicProgress(self.request.get("responseDeltas") is True)
+        thread_id = turn_id = None
+        completed = False
+        expected_rpc = 1
+        raw_items = {}
+        raw_final = None
+        pending = bytearray()
+        outgoing = bytearray()
+        stderr = bytearray()
+        total = 0
+        selector = selectors.DefaultSelector()
+        allowed_items = {"userMessage", "agentMessage", "reasoning", "plan", "contextCompaction"}
+        try:
+            os.set_blocking(child.stdin.fileno(), False)
+            selector.register(child.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(child.stderr, selectors.EVENT_READ, "stderr")
+
+            def send(message):
+                outgoing.extend((json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8"))
+                try:
+                    selector.get_key(child.stdin)
+                except KeyError:
+                    selector.register(child.stdin, selectors.EVENT_WRITE, "stdin")
+
+            def rpc_error():
+                raise RunnerError("Native Codex protocol failed / Codex 原生流式协议失败", "invalid_output")
+
+            def scope(params, require_turn=True):
+                if params.get("threadId") != thread_id:
+                    rpc_error()
+                if require_turn and (not turn_id or params.get("turnId") != turn_id):
+                    rpc_error()
+
+            def item_value(item):
+                if not isinstance(item, dict) or item.get("type") not in allowed_items:
+                    raise RunnerError("Codex attempted a tool call; request rejected / Codex 尝试调用工具，请求已拒绝", "tool_call")
+                if item["type"] == "agentMessage":
+                    ident = item.get("id")
+                    if not isinstance(ident, str) or not ident:
+                        rpc_error()
+                    return ident
+                return None
+
+            def consume(line):
+                nonlocal thread_id, turn_id, completed, raw_final, expected_rpc
+                try:
+                    message = json.loads(line)
+                except (ValueError, UnicodeError):
+                    rpc_error()
+                if not isinstance(message, dict):
+                    rpc_error()
+                if "method" in message and "id" in message:
+                    # Approval, dynamic tool and credential requests are never delegated.
+                    raise RunnerError("Codex requested an unsupported tool or approval / Codex 请求了不受支持的工具或批准", "tool_call")
+                if "id" in message:
+                    if type(message["id"]) is not int or message["id"] != expected_rpc:
+                        rpc_error()
+                    if message.get("error"):
+                        raise friendly(json.dumps(message["error"]))
+                    result = message.get("result")
+                    if not isinstance(result, dict):
+                        rpc_error()
+                    if message["id"] == 1:
+                        expected_rpc = 2
+                        send(dict(method="initialized", params={}))
+                        send(dict(id=2, method="thread/start", params=dict(
+                            cwd=cwd, approvalPolicy="never", sandbox="read-only", ephemeral=True,
+                            dynamicTools=[], environments=[], config={"features.shell_tool": False, "features.hooks": False, "features.apps": False,
+                                "features.browser_use": False, "features.computer_use": False,
+                                "web_search": "disabled", "mcp_servers": {}, "project_doc_max_bytes": 0})))
+                    elif message["id"] == 2:
+                        expected_rpc = 3
+                        thread_id = result.get("thread", {}).get("id")
+                        if not isinstance(thread_id, str) or not thread_id:
+                            rpc_error()
+                        progress.activity("connection", "completed")
+                        inputs = [dict(type="text", text=prompt, text_elements=[])]
+                        inputs.extend(dict(type="localImage", path=image) for image in images)
+                        send(dict(id=3, method="turn/start", params=dict(
+                            threadId=thread_id, cwd=cwd, approvalPolicy="never", input=inputs, outputSchema=schema)))
+                    elif message["id"] == 3:
+                        expected_rpc = None
+                        ident = result.get("turn", {}).get("id")
+                        if not isinstance(ident, str) or not ident or (turn_id and turn_id != ident):
+                            rpc_error()
+                        turn_id = ident
+                    else:
+                        rpc_error()
+                    return
+                method, params = message.get("method"), message.get("params", {})
+                if not isinstance(method, str) or not isinstance(params, dict):
+                    rpc_error()
+                if method == "turn/started":
+                    scope(params, False)
+                    ident = params.get("turn", {}).get("id")
+                    if not isinstance(ident, str) or not ident or (turn_id and turn_id != ident):
+                        rpc_error()
+                    turn_id = ident
+                    progress.activity("model", "running")
+                elif method in ("item/started", "item/completed"):
+                    scope(params)
+                    item = params.get("item")
+                    ident = item_value(item)
+                    if ident:
+                        if method == "item/started":
+                            if ident in raw_items:
+                                rpc_error()
+                            raw_items[ident] = ""
+                        else:
+                            if ident not in raw_items or not isinstance(item.get("text"), str):
+                                rpc_error()
+                            raw_items[ident] = item["text"]
+                            if item.get("phase") != "commentary":
+                                raw_final = item["text"]
+                            progress.summary(item["text"], complete=True)
+                            progress.activity("response", "completed")
+                elif method == "item/agentMessage/delta":
+                    scope(params)
+                    ident, delta = params.get("itemId"), params.get("delta")
+                    if ident not in raw_items or not isinstance(delta, str):
+                        rpc_error()
+                    raw_items[ident] += delta
+                    if len(raw_items[ident].encode("utf-8")) > MAX_OUTPUT:
+                        raise RunnerError("Codex response exceeded the safety limit", "output_limit")
+                    progress.activity("response", "running")
+                    progress.summary(raw_items[ident])
+                elif method == "turn/completed":
+                    scope(params, False)
+                    turn = params.get("turn", {})
+                    if not turn_id or turn.get("id") != turn_id:
+                        rpc_error()
+                    if turn.get("status") != "completed":
+                        if turn.get("status") == "interrupted":
+                            raise RunnerError("Codex request cancelled / Codex 请求已取消", "cancelled")
+                        raise friendly(json.dumps(turn.get("error") or {}))
+                    if not isinstance(raw_final, str) or not raw_final.strip():
+                        rpc_error()
+                    progress.activity("model", "completed")
+                    completed = True
+                elif method == "error":
+                    if not params.get("willRetry", False):
+                        raise friendly(json.dumps(params.get("error") or {}))
+                elif method == "mcpServer/startupStatus/updated":
+                    # Lifecycle status is not a tool invocation; never forward its payload.
+                    pass
+                elif re.search(r"commandExecution|fileChange|tool|mcp|webSearch|approval|requestUserInput", method, re.I):
+                    raise RunnerError("Codex attempted a tool operation: " + re.sub(r"[^a-zA-Z0-9_/-]", "", method)[:120], "tool_call")
+                # Ignore lifecycle, reasoning and usage notifications completely.
+
+            send(dict(id=1, method="initialize", params=dict(
+                clientInfo=dict(name="telldo", title="Telldo", version="0.2.0"), capabilities=dict(experimentalApi=True))))
+            while not completed:
+                self.check()
+                if not selector.get_map():
+                    raise friendly(stderr.decode("utf-8", "replace"))
+                for key, _ in selector.select(0.05):
+                    if key.data == "stdin":
+                        try:
+                            written = os.write(child.stdin.fileno(), outgoing)
+                            del outgoing[:written]
+                        except (BlockingIOError, InterruptedError):
+                            continue
+                        except (BrokenPipeError, OSError):
+                            raise friendly(stderr.decode("utf-8", "replace"))
+                        if not outgoing:
+                            selector.unregister(child.stdin)
+                        continue
+                    chunk = os.read(key.fileobj.fileno(), 8192)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    total += len(chunk)
+                    if total > MAX_OUTPUT:
+                        raise RunnerError("Codex output exceeded the safety limit", "output_limit")
+                    if key.data == "stderr":
+                        stderr.extend(chunk)
+                    else:
+                        pending.extend(chunk)
+                        while b"\n" in pending:
+                            line, _, rest = pending.partition(b"\n")
+                            pending = bytearray(rest)
+                            if line.strip():
+                                consume(line.decode("utf-8"))
+                            if completed:
+                                break
+                    if completed:
+                        break
+            self.check()
+            # Parent still validates the full JSON/schema before applying any action.
+            return raw_final
+        finally:
+            selector.close()
+            self.kill()
+            try:
+                child.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.kill()
+            for stream in (child.stdin, child.stdout, child.stderr):
+                stream.close()
+            self.child = None
 
     def run(self, caps, cwd):
         if not caps["available"]:
@@ -349,6 +568,7 @@ class Runtime:
         if images and not caps.get("imageInput"):
             raise RunnerError("Remote Codex does not support image input / 远端 Codex 不支持图片输入", "unsupported_input")
         total = 0
+        image_paths = []
         ids = set()
         for index, image in enumerate(images):
             self.check()
@@ -382,12 +602,24 @@ class Runtime:
             path.write_bytes(data)
             path.chmod(0o600)
             args.extend(["--image", str(path)])
+            image_paths.append(str(path))
             self.check()
+        if caps.get("appServer"):
+            raw = self.run_native(caps["path"], str(workdir), prompt, schema, image_paths)
+            self.check()
+            try:
+                proposal = json.loads(raw)
+            except (ValueError, TypeError):
+                proposal = None
+            if not isinstance(proposal, dict):
+                raise RunnerError("Codex final response must be a strict JSON object", "invalid_output")
+            emit("proposal", raw=raw)
+            return
         if images:
             args.append("--")
         args.append("-")
         last_message = [None]
-        progress = PublicProgress()
+        progress = PublicProgress(self.request.get("responseDeltas") is True)
         progress.activity("connection", "completed", "远端 Codex 已就绪")
         def line(text):
             try:

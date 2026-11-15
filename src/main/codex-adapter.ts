@@ -1,3 +1,4 @@
+import { runAppServer } from "./codex-app-server";
 import type { AIInputAttachment } from "../shared/ai-input";
 import { prepareAIInputs, ATTACHMENT_INPUT_NOTE } from "./attachment-input";
 import { CodexProgressTracker, type AIProgress } from "../shared/ai-progress";
@@ -240,11 +241,22 @@ export class CodexAdapter {
       if (version.code !== 0 || help.code !== 0)
         throw friendlyError(version.stderr + help.stderr);
       const h = help.stdout + help.stderr;
+      let appServer = false;
+      try {
+        const nativeHelp = await this.command(file, ["app-server", "--help"]);
+        appServer =
+          nativeHelp.code === 0 &&
+          /--listen|--stdio/.test(nativeHelp.stdout + nativeHelp.stderr);
+      } catch {
+        /* Older CLIs retain their existing non-streaming exec path. */
+      }
       const has = (flag: string) =>
         new RegExp("(^|\\s)" + flag + "(?=\\s|[=<,]|$)", "m").test(h);
       this.imageInput = has("--image");
       const caps: Capabilities = {
         ...EMPTY,
+        appServer,
+        streaming: appServer,
         path: file,
         version: version.stdout.trim(),
         schema: has("--output-schema"),
@@ -256,7 +268,9 @@ export class CodexAdapter {
         ephemeral: has("--ephemeral"),
         skipGitCheck: has("--skip-git-repo-check"),
       };
-      caps.isolation = `read-only: ${caps.readOnly}; ignore user config: ${caps.ignoreUserConfig}; ignore rules: ${caps.ignoreRules}. No forced no-shell/MCP/network guarantee. Observed tool calls fail the request. / 不保证强制无工具隔离；检测到工具调用即失败。`;
+      caps.isolation = appServer
+        ? "Native read-only ephemeral thread; approval requests and observed tools are rejected. Native app-server loads the existing provider configuration; exec-only ignore-config/rules flags do not apply. / 原生只读临时线程；拒绝批准请求和检测到的工具调用。原生模式保留已有模型提供方配置，不宣称忽略用户配置或规则。"
+        : `read-only: ${caps.readOnly}; ignore user config: ${caps.ignoreUserConfig}; ignore rules: ${caps.ignoreRules}. No forced no-shell/MCP/network guarantee. Observed tool calls fail the request. / 不保证强制无工具隔离；检测到工具调用即失败。`;
       const loginHelp = await this.command(file, ["login", "--help"]);
       if (
         loginHelp.code === 0 &&
@@ -355,11 +369,13 @@ export class CodexAdapter {
       if (caps.skipGitCheck) args.push("--skip-git-repo-check");
       if (caps.schema) args.push("--output-schema", schemaFile);
       if (caps.outputFile) args.push("--output-last-message", finalFile);
+      const imagePaths: string[] = [];
       for (const [index, image] of prepared.images.entries()) {
         const path = join(dir, `image-${index}.${image.extension}`);
         await writeFile(path, image.bytes, { mode: 0o600 });
         checkInput();
         args.push("--image", path);
+        imagePaths.push(path);
       }
       if (prepared.images.length) args.push("--");
       args.push("-");
@@ -377,148 +393,165 @@ export class CodexAdapter {
         }) +
         "\nUSER REQUEST (task, memo capture or question intent):\n" +
         JSON.stringify(sourceText);
-      const raw = await new Promise<string>((resolve, reject) => {
-        let child: ChildProcessWithoutNullStreams;
-        try {
-          child = this.spawnProcess(caps.path, args, {
+      const raw = caps.appServer
+        ? await runAppServer({
+            spawn: this.spawnProcess,
+            executable: caps.path,
             cwd: workDir,
             env: this.options.env ?? process.env,
-            stdio: "pipe",
-            shell: false,
-            windowsHide: true,
-            detached: process.platform !== "win32",
-          });
-        } catch (error) {
-          reject(error);
-          return;
-        }
-        let settled = false,
-          buffer = "",
-          stderr = "",
-          finalMessage = "",
-          total = 0,
-          streamFailure = "";
-        const decoder = new StringDecoder("utf8");
-        const kill = () => {
-          try {
-            if (child.pid && process.platform !== "win32")
-              process.kill(-child.pid, "SIGKILL");
-            else child.kill("SIGKILL");
-          } catch {
+            prompt,
+            schema: JSON.parse(schema),
+            imagePaths,
+            timeoutMs: Math.max(1, timeoutMs - (Date.now() - startedAt)),
+            progress,
+            registerAbort: (abort) => {
+              this.abortCurrent = abort;
+              if (earlyAbort) abort(earlyAbort);
+            },
+            errorFor: friendlyError,
+          })
+        : await new Promise<string>((resolve, reject) => {
+            let child: ChildProcessWithoutNullStreams;
             try {
-              child.kill("SIGKILL");
-            } catch {
-              /* process already gone */
+              child = this.spawnProcess(caps.path, args, {
+                cwd: workDir,
+                env: this.options.env ?? process.env,
+                stdio: "pipe",
+                shell: false,
+                windowsHide: true,
+                detached: process.platform !== "win32",
+              });
+            } catch (error) {
+              reject(error);
+              return;
             }
-          }
-        };
-        const fail = (error: Error) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          kill();
-          reject(error);
-        };
-        const timer = setTimeout(
-          () =>
-            fail(
-              new Error(
-                "Codex timed out. No tasks were changed. / Codex 请求超时，任务未更改。",
-              ),
-            ),
-          Math.max(1, timeoutMs - (Date.now() - startedAt)),
-        );
-        this.abortCurrent = fail;
-        const consume = (line: string) => {
-          if (!line.trim() || settled) return;
-          let event: any;
-          try {
-            event = JSON.parse(line);
-          } catch {
-            fail(
-              new Error(
-                "Codex returned an invalid event stream. / Codex 返回了无效事件流。",
-              ),
+            let settled = false,
+              buffer = "",
+              stderr = "",
+              finalMessage = "",
+              total = 0,
+              streamFailure = "";
+            const decoder = new StringDecoder("utf8");
+            const kill = () => {
+              try {
+                if (child.pid && process.platform !== "win32")
+                  process.kill(-child.pid, "SIGKILL");
+                else child.kill("SIGKILL");
+              } catch {
+                try {
+                  child.kill("SIGKILL");
+                } catch {
+                  /* process already gone */
+                }
+              }
+            };
+            const fail = (error: Error) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              kill();
+              reject(error);
+            };
+            const timer = setTimeout(
+              () =>
+                fail(
+                  new Error(
+                    "Codex timed out. No tasks were changed. / Codex 请求超时，任务未更改。",
+                  ),
+                ),
+              Math.max(1, timeoutMs - (Date.now() - startedAt)),
             );
-            return;
-          }
-          if (isToolEvent(event)) {
-            fail(
-              new Error(
-                "Codex attempted a tool call. This request was rejected and no tasks were changed. / 检测到工具调用，本次请求已拒绝，任务未更改。",
-              ),
-            );
-            return;
-          }
-          if (event.type === "error" || event.type === "turn.failed")
-            streamFailure = String(
-              event.message ?? event.error?.message ?? "Codex turn failed",
-            );
-          if (
-            event.type === "item.completed" &&
-            event.item?.type === "agent_message" &&
-            typeof event.item.text === "string"
-          )
-            finalMessage = event.item.text;
-          progress.consume(event);
-        };
-        child.stdout.on("data", (data: Buffer) => {
-          total += data.length;
-          if (total > MAX_OUTPUT) {
-            fail(
-              new Error(
-                "Codex output exceeded the size limit. / Codex 输出超出大小限制。",
-              ),
-            );
-            return;
-          }
-          buffer += decoder.write(data);
-          let idx: number;
-          while ((idx = buffer.indexOf("\n")) !== -1) {
-            const line = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 1);
-            consume(line);
-          }
-        });
-        child.stderr.on("data", (data: Buffer) => {
-          stderr = (stderr + data.toString()).slice(-16000);
-        });
-        child.stdin.on("error", () => {
-          /* close/error conveys process failure */
-        });
-        child.once("error", (error) => fail(friendlyError(error.message)));
-        child.once("close", async (code) => {
-          if (settled) return;
-          buffer += decoder.end();
-          if (buffer.trim()) consume(buffer);
-          if (settled) return;
-          if (code !== 0 || streamFailure) {
-            fail(friendlyError(stderr + " " + streamFailure));
-            return;
-          }
-          try {
-            let business = finalMessage;
-            if (caps.outputFile) {
-              const size = (await stat(finalFile)).size;
-              if (size > MAX_OUTPUT)
-                throw new Error("Codex proposal exceeded size limit.");
-              business = await readFile(finalFile, "utf8");
-            }
-            if (!business.trim())
-              throw new Error(
-                "Codex did not return a final proposal. / Codex 未返回最终提案。",
-              );
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            resolve(business);
-          } catch (error) {
-            fail(error instanceof Error ? error : new Error(String(error)));
-          }
-        });
-        progress.activity("connection", "running", "启动本机 Codex CLI");
-        child.stdin.end(prompt);
-      });
+            this.abortCurrent = fail;
+            const consume = (line: string) => {
+              if (!line.trim() || settled) return;
+              let event: any;
+              try {
+                event = JSON.parse(line);
+              } catch {
+                fail(
+                  new Error(
+                    "Codex returned an invalid event stream. / Codex 返回了无效事件流。",
+                  ),
+                );
+                return;
+              }
+              if (isToolEvent(event)) {
+                fail(
+                  new Error(
+                    "Codex attempted a tool call. This request was rejected and no tasks were changed. / 检测到工具调用，本次请求已拒绝，任务未更改。",
+                  ),
+                );
+                return;
+              }
+              if (event.type === "error" || event.type === "turn.failed")
+                streamFailure = String(
+                  event.message ?? event.error?.message ?? "Codex turn failed",
+                );
+              if (
+                event.type === "item.completed" &&
+                event.item?.type === "agent_message" &&
+                typeof event.item.text === "string"
+              )
+                finalMessage = event.item.text;
+              progress.consume(event);
+            };
+            child.stdout.on("data", (data: Buffer) => {
+              total += data.length;
+              if (total > MAX_OUTPUT) {
+                fail(
+                  new Error(
+                    "Codex output exceeded the size limit. / Codex 输出超出大小限制。",
+                  ),
+                );
+                return;
+              }
+              buffer += decoder.write(data);
+              let idx: number;
+              while ((idx = buffer.indexOf("\n")) !== -1) {
+                const line = buffer.slice(0, idx);
+                buffer = buffer.slice(idx + 1);
+                consume(line);
+              }
+            });
+            child.stderr.on("data", (data: Buffer) => {
+              stderr = (stderr + data.toString()).slice(-16000);
+            });
+            child.stdin.on("error", () => {
+              /* close/error conveys process failure */
+            });
+            child.once("error", (error) => fail(friendlyError(error.message)));
+            child.once("close", async (code) => {
+              if (settled) return;
+              buffer += decoder.end();
+              if (buffer.trim()) consume(buffer);
+              if (settled) return;
+              if (code !== 0 || streamFailure) {
+                fail(friendlyError(stderr + " " + streamFailure));
+                return;
+              }
+              try {
+                let business = finalMessage;
+                if (caps.outputFile) {
+                  const size = (await stat(finalFile)).size;
+                  if (size > MAX_OUTPUT)
+                    throw new Error("Codex proposal exceeded size limit.");
+                  business = await readFile(finalFile, "utf8");
+                }
+                if (!business.trim())
+                  throw new Error(
+                    "Codex did not return a final proposal. / Codex 未返回最终提案。",
+                  );
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(business);
+              } catch (error) {
+                fail(error instanceof Error ? error : new Error(String(error)));
+              }
+            });
+            progress.activity("connection", "running", "启动本机 Codex CLI");
+            child.stdin.end(prompt);
+          });
       progress.activity("validation", "running");
       let decoded: unknown;
       try {

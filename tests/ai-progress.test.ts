@@ -62,6 +62,22 @@ describe("public Codex progress", () => {
     );
   });
 
+  it("streams single-character updates beyond the old 100-preview cap", () => {
+    const events: AIProgress[] = [];
+    const tracker = new CodexProgressTracker((event) => events.push(event));
+    for (let size = 1; size <= 150; size++)
+      tracker.summary('{"summary":"' + "字".repeat(size));
+    const replies = events.filter(
+      (event) => typeof event !== "string" && event.type === "response",
+    );
+    expect(replies).toHaveLength(150);
+    expect(replies[0]).toEqual({ type: "response", text: "字" });
+    expect(replies.at(-1)).toEqual({
+      type: "response",
+      text: "字".repeat(150),
+    });
+  });
+
   it("accepts only bounded known helper progress and regenerates public labels", () => {
     expect(
       parseAIProgress({

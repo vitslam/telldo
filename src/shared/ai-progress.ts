@@ -13,6 +13,7 @@ export interface AIActivity {
 }
 export interface AIResponsePreview {
   type: "response";
+  roundId?: string;
   /** Cumulative, unconfirmed answer text. The validated final reply replaces it. */
   text: string;
 }
@@ -135,7 +136,6 @@ export function responseSummary(raw: string): string {
 export class CodexProgressTracker {
   private states = new Map<AIActivityPhase, AIActivity["status"]>();
   private preview = "";
-  private previewCount = 0;
   constructor(private readonly emit: (progress: AIProgress) => void) {}
   activity(
     phase: AIActivityPhase,
@@ -146,12 +146,10 @@ export class CodexProgressTracker {
     this.states.set(phase, status);
     this.emit(aiActivity(phase, status, detail));
   }
-  summary(raw: string, complete = false) {
+  summary(raw: string, _complete = false) {
     const text = responseSummary(raw);
-    if (!text || text === this.preview || this.previewCount >= 100) return;
-    if (!complete && text.length - this.preview.length < 24) return;
+    if (!text || text === this.preview) return;
     this.preview = text;
-    this.previewCount++;
     this.emit({ type: "response", text });
   }
   consume(event: Record<string, any>) {
