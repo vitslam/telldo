@@ -1,3 +1,4 @@
+import { nextListColor } from "../shared/list-colors";
 import Database from "./sqlite";
 import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
@@ -268,8 +269,9 @@ export class TaskService {
       )
       .all() as List[];
   }
-  createList(name: string, color = "#6d74e8"): List {
+  createList(name: string, color?: string): List {
     name = text(name);
+    color ??= nextListColor(this.listLists());
     if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error("Invalid list color");
     const at = now();
     const value: List = {

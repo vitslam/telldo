@@ -347,3 +347,66 @@
     animation: none;
   }
 }
+
+
+/* Notes are text on the card surface, editable without a surrounding field. */
+.task-notes { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.task-detail-card .detail-scroll .task-notes label { font-size: 12px; font-weight: 400; }
+.task-detail-card .detail-scroll textarea.task-notes-text,
+.task-detail-card .detail-scroll textarea.task-notes-text:focus {
+  display: block;
+  width: 100%;
+  min-height: 23px;
+  flex-shrink: 0;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.task-notes-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 20px;
+}
+.task-notes-toggle:hover { background: transparent; color: var(--brand); }
+.task-detail-card .task-attachment-section { margin: 0; padding: 0; border: 0; }
+.task-detail-card .task-attachments { align-items: flex-start; margin: 0; }
+.task-detail-card .task-attachments .task-attachment-image,
+.task-detail-card .task-attachments .task-attachment-image:hover {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.task-detail-card .task-attachments .task-attachment-image img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.task-card-footer .task-card-ask { margin-left: 0; }
+.task-card-footer .task-card-ask:disabled { opacity: .4; cursor: default; }

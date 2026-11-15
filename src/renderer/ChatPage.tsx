@@ -1,4 +1,5 @@
 import "./chat-result-cards.css";
+import ImagePreview from "./ImagePreview";
 import { DateTime } from "luxon";
 import {
   useEffect,
@@ -473,22 +474,6 @@ export default function ChatPage({
       setPreview(null);
     }
   }, [visible]);
-  useEffect(() => {
-    if (!preview) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        setPreview(null);
-      }
-    };
-    document.addEventListener("keydown", close);
-    return () => {
-      document.removeEventListener("keydown", close);
-      previous?.isConnected && previous.focus();
-    };
-  }, [preview]);
   function selectFiles(files: globalThis.File[]) {
     if (!files.length) return;
     addFiles(files);
@@ -1106,43 +1091,7 @@ export default function ChatPage({
         )}
 
       </div>
-      {visible && preview?.previewUrl && (
-        <div
-          className="overlay conversation-image-overlay"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setPreview(null);
-          }}
-        >
-          <div
-            className="conversation-image-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={text("图片预览", "Image preview")}
-            tabIndex={-1}
-            onKeyDown={(event) => {
-              if (event.key === "Tab") {
-                event.preventDefault();
-                event.currentTarget
-                  .querySelector<HTMLButtonElement>("button")
-                  ?.focus();
-              }
-            }}
-          >
-            <div>
-              <span>{preview.name}</span>
-              <button
-                autoFocus
-                onClick={() => setPreview(null)}
-                aria-label={text("关闭预览", "Close preview")}
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <img src={preview.previewUrl} alt={preview.name} />
-          </div>
-        </div>
-      )}
+      {visible && preview?.previewUrl && <ImagePreview src={preview.previewUrl} alt={preview.name} close={() => setPreview(null)} />}
     </section>
   );
 }

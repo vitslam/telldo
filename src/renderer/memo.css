@@ -1444,3 +1444,5 @@ button.content-reference-main:hover {
   margin-left: auto;
   white-space: nowrap;
 }
+
+.memo-timeline-page .timeline-scope { margin-top: 0; }

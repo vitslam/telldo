@@ -1,3 +1,7 @@
+import { LIST_COLORS, nextListColor } from "../shared/list-colors";
+import DetailSelect from "./DetailSelect";
+import ImagePreview from "./ImagePreview";
+import TaskNotes from "./TaskNotes";
 import ChatHistoryDialog from "./ChatHistoryDialog";
 import SidebarResizeHandle from "./SidebarResizeHandle";
 import { useChatHistory } from "./use-chat-history";
@@ -59,6 +63,9 @@ import {
 } from "../shared/dates";
 
 const zh: Record<string, string> = {
+  "Save changes first": "请先保存更改",
+  "Show more": "展开全文",
+  "Show less": "收起",
   "AI connection": "AI 连接方式",
   "This Mac / Local": "本机 Codex",
   "Remote computer over SSH": "通过 SSH 连接远端电脑",
@@ -347,6 +354,7 @@ export default function App() {
     [listDialog, setListDialog] = useState<{
       id?: string;
       name: string;
+      color: string;
     } | null>(null),
     [proposalId, setProposalId] = useState<string | null>(null),
     [confirm, setConfirm] = useState<{
@@ -1026,14 +1034,17 @@ export default function App() {
                   <LoaderCircle size={13} className="spin nav-working" />
                 )}
 
-                {id !== "planned" && id !== "assistant" && id !== "memos" && (
+                {id !== "assistant" && id !== "memos" && (
                   <small>
-                    {
-                      allRows.filter(
-                        ({ task: a, template }) =>
+                    {id === "planned"
+                      ? tasks.filter((task) =>
+                          !task.parent_id && task.status === "todo" &&
+                          (task.due_kind !== "none" || !!task.planned_date ||
+                            data?.recurrences.some((series) => series.task_id === task.id)),
+                        ).length
+                      : allRows.filter(({ task: a, template }) =>
                           !template && taskInView(a, String(id), zone),
-                      ).length
-                    }
+                        ).length}
                   </small>
                 )}
               </button>
@@ -1044,7 +1055,7 @@ export default function App() {
           {t("MY LISTS")}
           <button
             aria-label={t("New list")}
-            onClick={() => setListDialog({ name: "" })}
+            onClick={() => setListDialog({ name: "", color: nextListColor(lists) })}
           >
             <Plus size={16} />
           </button>
@@ -1255,11 +1266,12 @@ export default function App() {
                 {currentList && (
                   <div className="heading-actions">
                     <button
-                      title={t("Rename list")}
+                      title={isZh ? "编辑清单" : "Edit list"}
                       onClick={() =>
                         setListDialog({
                           id: currentList.id,
                           name: currentList.name,
+                          color: currentList.color,
                         })
                       }
                     >
@@ -1562,15 +1574,16 @@ export default function App() {
                 if (listDialog.id)
                   await api("updateList", listDialog.id, {
                     name: listDialog.name.trim(),
+                    color: listDialog.color,
                   });
-                else await api("createList", listDialog.name.trim(), "#7180ea");
+                else await api("createList", listDialog.name.trim(), listDialog.color);
                 setListDialog(null);
               });
             }}
           >
             <div className="modal-heading">
               <h2 id="list-dialog-title">
-                {t(listDialog.id ? "Rename list" : "New list")}
+                {listDialog.id ? (isZh ? "编辑清单" : "Edit list") : t("New list")}
               </h2>
               <button
                 type="button"
@@ -1599,6 +1612,25 @@ export default function App() {
                   }
                 />
               </label>
+              <fieldset className="list-color-field">
+                <legend>{isZh ? "颜色" : "Color"}</legend>
+                <div className="list-color-options">
+                  {LIST_COLORS.map(({ color, name, zh }) => (
+                    <button
+                      key={color}
+                      type="button"
+                      className="list-color-swatch"
+                      style={{ "--swatch-color": color } as import("react").CSSProperties}
+                      aria-label={isZh ? zh : name}
+                      aria-pressed={listDialog.color.toLowerCase() === color}
+                      title={isZh ? zh : name}
+                      onClick={() => setListDialog({ ...listDialog, color })}
+                    >
+                      {listDialog.color.toLowerCase() === color && <Check size={12} />}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
             </div>
             <div className="dialog-actions modal-footer">
               <button type="button" onClick={() => setListDialog(null)}>
@@ -1683,6 +1715,7 @@ function TaskDetail({
   onAsk?: (task: Task) => void;
 }) {
   const attachmentInput = useRef<HTMLInputElement>(null);
+  const [imagePreview, setImagePreview] = useState<MemoAttachment | null>(null);
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<TaskPatch>({ ...task }),
@@ -1872,33 +1905,24 @@ function TaskDetail({
             {t("Recurring template")}
           </div>
         )}
-        <label>
-          {t("Notes")}
-          <textarea
-            placeholder={t("Add a little context…")}
-            value={draft.notes}
-            onChange={(e) => set("notes", e.target.value)}
-            rows={3}
-          />
-        </label>
+        <TaskNotes value={draft.notes || ""} onChange={value => set("notes", value)}
+          label={t("Notes")} placeholder={t("Add a little context…")} more={t("Show more")} less={t("Show less")} />
         {!!task.attachments?.length && (
           <section className="detail-section task-attachment-section">
-            <h3>
-              <Paperclip size={15} />
-              {t("Attachments")}
-            </h3>
             <div className="task-attachments">
               {task.attachments?.map((file) => (
                 <button
                   key={file.id}
-                  onClick={() =>
+                  className={file.kind === "image" ? "task-attachment-image" : "task-attachment-file"}
+                  aria-label={file.kind === "image" ? `${t("Preview image")}: ${file.name}` : file.name}
+                  onClick={() => file.kind === "image" ? setImagePreview(file) :
                     void api("memoOpen", file.id).catch((e) =>
                       act(async () => {
                         throw e;
                       }),
                     )
                   }
-                  title={file.name}
+                  title={file.kind === "image" ? undefined : file.name}
                 >
                   {file.kind === "image" ? (
                     <img
@@ -1908,39 +1932,21 @@ function TaskDetail({
                   ) : (
                     <Paperclip size={17} />
                   )}
-                  <span>{file.name}</span>
+                  {file.kind !== "image" && <span>{file.name}</span>}
                 </button>
               ))}
             </div>
           </section>
         )}
-        <div className="form-grid">
-          <label>
-            {t("List")}
-            <select
-              value={draft.list_id}
-              onChange={(e) => set("list_id", e.target.value)}
-            >
-              {data.lists.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {t("Priority")}
-            <select
-              value={draft.priority}
-              onChange={(e) => set("priority", e.target.value)}
-            >
-              {["none", "low", "medium", "high"].map((v) => (
-                <option key={v} value={v}>
-                  {t(v[0].toUpperCase() + v.slice(1))}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="task-properties">
+          <DetailSelect label={t("List")} value={draft.list_id || task.list_id}
+            options={data.lists.map(list => ({ value: list.id, label: list.name, color: list.color }))}
+            onChange={value => set("list_id", value)} />
+          <DetailSelect label={t("Priority")} value={draft.priority || "none"}
+            options={(["none", "low", "medium", "high"] as const).map(value => ({
+              value, label: t(value[0].toUpperCase() + value.slice(1)),
+              color: { none: undefined, low: "#7099c7", medium: "#c89954", high: "#c46e73" }[value],
+            }))} onChange={value => set("priority", value)} />
         </div>
         {series && (
           <p className="notice">
@@ -2419,30 +2425,15 @@ function TaskDetail({
             <Paperclip size={17} />
           </button>
         )}
-        {onAsk && (
-          <button className="task-card-ask" onClick={() => onAsk(task)}>
-            <Sparkles size={16} />
-            {t("Ask AI")}
-          </button>
-        )}
         <span className="task-card-footer-space" />
-        {hasChanges && (
-          <button className="task-card-dismiss" onClick={close}>
-            {t("Close")}
-          </button>
-        )}
-        <button
-          className="primary task-card-save"
-          disabled={saving}
-          onClick={() => (hasChanges ? void save() : close())}
-        >
-          {saving ? (
-            <LoaderCircle size={15} className="spin" />
-          ) : hasChanges ? (
-            <Check size={15} />
-          ) : null}
-          {t(hasChanges ? "Save changes" : "Close")}
-        </button>
+        {hasChanges && <button className="primary task-card-save" disabled={saving} onClick={() => void save()}>
+          {saving ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}
+          {t("Save changes")}
+        </button>}
+        {onAsk && <button className="task-card-ask" disabled={saving || hasChanges}
+          title={hasChanges ? t("Save changes first") : undefined} onClick={() => onAsk(task)}>
+          <Sparkles size={16} />{t("Ask AI")}
+        </button>}
       </div>
       <input
         hidden
@@ -2455,6 +2446,7 @@ function TaskDetail({
           event.target.value = "";
         }}
       />
+      {imagePreview && <ImagePreview src={`telldo-memo://attachment/${imagePreview.id}`} alt={imagePreview.name} close={() => setImagePreview(null)} />}
     </DetailCardModal>
   );
 }

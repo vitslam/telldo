@@ -608,24 +608,6 @@ export default function MemoPage({
       aria-label={t("时间线", "Timeline")}
     >
       <div className="memo-workspace">
-        <header className="memo-page-heading">
-          <div>
-            <div className="memo-eyebrow">
-              {t(
-                "留下的内容，随时找回",
-                "EVERYTHING YOU KEEP, IN ONE PLACE",
-              )}
-            </div>
-            <h1>{t("时间线", "Timeline")}</h1>
-            <p>
-              {t(
-                "按保存时间回看内容，行动与资料都在这里。",
-                "Browse what you saved, with actions and content together.",
-              )}
-            </p>
-          </div>
-
-        </header>
         <div
           className="timeline-scope"
           role="group"

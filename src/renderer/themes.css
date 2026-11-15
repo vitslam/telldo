@@ -2177,3 +2177,44 @@ button.brand:focus-visible {
 .conversation-message.user .conversation-attachment-image > span {
   display: none;
 }
+
+/* Thumbnails contain only the image, without a surrounding tile. */
+.conversation-message.user .conversation-attachment-image,
+.conversation-message.user .conversation-attachment-image:hover {
+  width: auto;
+  height: auto;
+  max-width: 112px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.conversation-message.user .conversation-attachment-image img {
+  width: auto;
+  height: auto;
+  max-width: 112px;
+  max-height: 112px;
+  object-fit: contain;
+  background: transparent;
+}
+
+/* Source images keep their original square corners in every conversation. */
+.conversation-message.user .conversation-attachment-image,
+.conversation-message.user .conversation-attachment-image img,
+.conversation-attachment-image,
+.conversation-attachment-image img,
+.draft-attachment-preview,
+.draft-attachment-preview img { border-radius: 0; }
+
+/* A small, shared palette for list creation and editing. */
+.list-color-field { margin: 20px 0 0; padding: 0; border: 0; min-width: 0; }
+.list-color-field legend { padding: 0; margin-bottom: 9px; font-size: 12px; color: var(--secondary); }
+.list-color-options { display: flex; flex-wrap: wrap; gap: 5px; }
+.list-dialog .list-color-swatch {
+  display: grid; place-items: center; flex: 0 0 25px; width: 25px; height: 25px;
+  min-height: 0; padding: 0; border: 3px solid var(--panel); border-radius: 50%;
+  background: var(--swatch-color); color: white; box-shadow: none;
+  transition: transform 120ms ease;
+}
+.list-dialog .list-color-swatch:hover { background: var(--swatch-color); transform: scale(1.12); }
+.list-dialog .list-color-swatch[aria-pressed="true"] { outline: 1px solid var(--swatch-color); outline-offset: 1px; }
