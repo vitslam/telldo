@@ -1,0 +1,268 @@
+/* Retrieved records stay readable inside the answer, with a quiet source link. */
+.chat-result-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 22px 0 8px;
+  max-width: 660px;
+}
+.chat-result {
+  min-width: 0;
+}
+.chat-result-card {
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 20px 22px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 2%);
+  transition:
+    border-color 140ms ease,
+    background 140ms ease;
+}
+.chat-result-card:hover {
+  border-color: var(--brand);
+  background: var(--panel);
+}
+.chat-result-card:focus-visible,
+.chat-result-link:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+.chat-result-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+.chat-result-kind,
+.chat-result-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-result-kind {
+  color: var(--secondary);
+}
+.chat-result-kind.is-done {
+  color: var(--secondary);
+}
+.chat-result-kind.is-done svg {
+  color: var(--brand);
+}
+.chat-result-list {
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-result-date {
+  margin-left: auto;
+}
+.chat-result-title {
+  display: block;
+  font-weight: 550;
+  font-size: 16px;
+  line-height: 1.65;
+  letter-spacing: -0.2px;
+  overflow-wrap: anywhere;
+}
+.chat-result-excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.85;
+  color: var(--secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-result-images {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 2px;
+}
+.chat-result-images img {
+  display: block;
+  width: 100%;
+  height: 132px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--subtle);
+}
+.chat-result-images img[hidden] {
+  display: none;
+}
+.chat-result-images.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.chat-result-images.single img {
+  height: auto;
+  max-height: 260px;
+  object-fit: contain;
+}
+.chat-result-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.chat-result-files > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--secondary);
+  background: var(--subtle);
+  border-radius: 6px;
+  padding: 6px 9px;
+  overflow-wrap: anywhere;
+}
+.chat-result-files svg {
+  flex-shrink: 0;
+}
+.chat-result-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  margin-top: 7px;
+  padding: 3px 2px;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--faint);
+  background: transparent;
+}
+.chat-result-link > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-result-link svg {
+  flex-shrink: 0;
+}
+.chat-result-link:hover {
+  color: var(--brand);
+  background: transparent;
+}
+/* Public intermediate replies remain available when execution is expanded. */
+.execution-steps li > div {
+  min-width: 0;
+}
+.execution-reply {
+  margin: 10px 0 6px;
+  padding: 12px 15px;
+  border-left: 2px solid var(--border);
+  background: var(--subtle);
+  border-radius: 0 9px 9px 0;
+  max-width: 720px;
+}
+.execution-reply .reply-prose {
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.85;
+}
+.execution-reply .reply-prose p {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  margin: 0;
+}
+.execution-reply .reply-prose h3 {
+  font-size: 13px;
+  font-weight: 550;
+  margin: 0 0 6px;
+}
+.execution-reply .reply-prose .reply-break {
+  height: 8px;
+}
+.execution-reply .reply-prose code {
+  font-size: 12px;
+}
+/* Permission is a persistent, lightweight choice next to the model. */
+.composer-permission {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+  padding: 4px 7px;
+  margin-left: 3px;
+  min-height: 28px;
+  color: var(--secondary);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.composer-permission:hover {
+  background: var(--hover);
+}
+.composer-permission.is-auto {
+  color: var(--brand);
+  background: var(--tint);
+}
+.composer-permission svg {
+  pointer-events: none;
+  flex-shrink: 0;
+}
+.composer-permission select {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  min-width: 0;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  min-height: 20px;
+  height: 20px;
+  color: inherit;
+  background: transparent;
+  font-size: 11px;
+  cursor: inherit;
+}
+.composer-permission select:focus {
+  box-shadow: none;
+}
+.composer-permission:focus-within {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.composer-permission:has(select:disabled) {
+  opacity: 0.55;
+  cursor: default;
+}
+@media (max-width: 1100px) {
+  .chat-result-card {
+    padding: 17px 18px;
+  }
+  .chat-result-date {
+    margin-left: 0;
+  }
+  .composer-left-tools {
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-result-card {
+    transition: none;
+  }
+}

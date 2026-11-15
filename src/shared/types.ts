@@ -179,6 +179,7 @@ export interface Settings {
   sshCodexPath: string;
   sshRunnerPath: string;
   sshProxyUrl: string;
+  permissionMode: "confirm" | "auto";
   alwaysConfirm: boolean;
   closeToTray: boolean;
 }

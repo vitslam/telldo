@@ -135,6 +135,7 @@ export class TaskService {
       sshCodexPath: "",
       sshRunnerPath: "",
       sshProxyUrl: "",
+      permissionMode: "confirm",
       alwaysConfirm: false,
       closeToTray: true,
       ...(row ? JSON.parse(row.value) : {}),
@@ -157,6 +158,7 @@ export class TaskService {
             "sshCodexPath",
             "sshRunnerPath",
             "sshProxyUrl",
+            "permissionMode",
             "alwaysConfirm",
             "closeToTray",
           ].includes(k),
@@ -173,6 +175,7 @@ export class TaskService {
       typeof value.codexPath !== "string" ||
       value.codexPath.length > 4096 ||
       value.codexPath.includes("\0") ||
+      !["confirm", "auto"].includes(value.permissionMode) ||
       typeof value.alwaysConfirm !== "boolean" ||
       typeof value.closeToTray !== "boolean"
     )

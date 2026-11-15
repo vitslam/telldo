@@ -1,5 +1,25 @@
 import type { AIActivity } from "./ai-progress";
+export interface ChatSource {
+  kind: "task" | "memo";
+  id: string;
+  title: string;
+  text?: string;
+  listName?: string;
+  status?: "todo" | "done";
+  dueDate?: string;
+  dueAt?: string;
+  timeZone?: string;
+  createdAt?: string;
+  attachments?: {
+    id: string;
+    name: string;
+    kind: "image" | "file";
+    previewUrl?: string;
+  }[];
+}
 export interface ChatMessage {
+  sources?: ChatSource[];
+  appliedProposalIds?: string[];
   id: string;
   role: "user" | "assistant";
   content: string;
@@ -10,6 +30,8 @@ export interface ChatMessage {
   error?: boolean;
 }
 export interface ChatReply {
+  sources?: ChatSource[];
+  appliedProposalIds?: string[];
   activities?: AIActivity[];
   kind: "answer" | "proposal" | "memo";
   memoId?: string;
@@ -266,6 +288,7 @@ export function conversationContext(context: Record<string, unknown>) {
     : undefined;
   return {
     conversation: history,
+    permissionMode: context.permissionMode === "auto" ? "auto" : "confirm",
     ...(phase ? { contextPhase: phase } : {}),
     ...(Array.isArray(context.recentReferences)
       ? {

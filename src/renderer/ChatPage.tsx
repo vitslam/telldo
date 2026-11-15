@@ -1,3 +1,5 @@
+import "./chat-result-cards.css";
+import { DateTime } from "luxon";
 import {
   useEffect,
   useLayoutEffect,
@@ -12,6 +14,9 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
+  ChevronDown,
+  ShieldCheck,
+  Zap,
   Circle,
   FileText,
   Image as ImageIcon,
@@ -24,7 +29,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import type { ChatMessage } from "../shared/conversation";
+import type { ChatMessage, ChatSource } from "../shared/conversation";
 import type { AIActivity } from "../shared/ai-progress";
 import type { Proposal } from "../shared/types";
 
@@ -202,6 +207,150 @@ function ReplyText({ text }: { text: string }) {
   );
 }
 
+function SourceCards({
+  sources,
+  isZh,
+  openMemo,
+  openTask,
+}: {
+  sources: ChatSource[];
+  isZh: boolean;
+  openMemo: (id: string) => void;
+  openTask: (id: string) => void;
+}) {
+  const text = (zh: string, en: string) => (isZh ? zh : en);
+  const dateLabel = (source: ChatSource) => {
+    const value =
+      source.dueAt ||
+      source.dueDate ||
+      (source.kind === "memo" ? source.createdAt : undefined);
+    if (!value) return "";
+    const date = DateTime.fromISO(value, {
+      zone: source.timeZone || "local",
+    }).setLocale(isZh ? "zh-CN" : "en");
+    if (!date.isValid) return "";
+    return date.toFormat(
+      source.dueAt
+        ? isZh
+          ? "M月d日 HH:mm"
+          : "MMM d, HH:mm"
+        : isZh
+          ? "yyyy年M月d日"
+          : "MMM d, yyyy",
+    );
+  };
+  return (
+    <div
+      className="chat-result-cards"
+      aria-label={text("相关记录", "Related records")}
+    >
+      {sources.slice(0, 6).map((source) => {
+        const open = () =>
+          source.kind === "task" ? openTask(source.id) : openMemo(source.id);
+        const date = dateLabel(source);
+        const images =
+          source.attachments
+            ?.filter((file) => file.kind === "image")
+            .slice(0, 3) || [];
+        const files =
+          source.attachments
+            ?.filter((file) => file.kind === "file")
+            .slice(0, 3) || [];
+        return (
+          <div
+            className="chat-result"
+            key={`${source.kind}:${source.id}`}
+            data-source-id={source.id}
+          >
+            <button
+              className={`chat-result-card is-${source.kind}`}
+              onClick={open}
+              aria-label={text(
+                `查看${source.kind === "task" ? "任务" : "资料"}：${source.title}`,
+                `Open ${source.kind === "task" ? "task" : "record"}: ${source.title}`,
+              )}
+            >
+              <span className="chat-result-meta">
+                <span
+                  className={`chat-result-kind ${source.status === "done" ? "is-done" : ""}`}
+                >
+                  {source.kind === "task" ? (
+                    source.status === "done" ? (
+                      <Check size={13} />
+                    ) : (
+                      <Circle size={12} />
+                    )
+                  ) : (
+                    <NotebookPen size={13} />
+                  )}
+                  {source.kind === "task"
+                    ? source.status === "done"
+                      ? text("已完成", "Completed")
+                      : text("待办", "To do")
+                    : text("资料", "Record")}
+                </span>
+                {source.listName && (
+                  <span className="chat-result-list">{source.listName}</span>
+                )}
+                {date && (
+                  <span className="chat-result-date">
+                    <CalendarDays size={11} />
+                    {date}
+                  </span>
+                )}
+              </span>
+              <strong className="chat-result-title">{source.title}</strong>
+              {source.text && (
+                <span className="chat-result-excerpt">{source.text}</span>
+              )}
+              {!!images.length && (
+                <span
+                  className={`chat-result-images ${images.length === 1 ? "single" : ""}`}
+                >
+                  {images.map((file) => (
+                    <img
+                      key={file.id}
+                      src={
+                        file.previewUrl || `telldo-memo://attachment/${file.id}`
+                      }
+                      alt={file.name}
+                      loading="lazy"
+                      onError={(event) => {
+                        event.currentTarget.hidden = true;
+                      }}
+                    />
+                  ))}
+                </span>
+              )}
+              {!!files.length && (
+                <span className="chat-result-files">
+                  {files.map((file) => (
+                    <span key={file.id}>
+                      <Paperclip size={12} />
+                      {file.name}
+                    </span>
+                  ))}
+                </span>
+              )}
+            </button>
+            <button className="chat-result-link" onClick={open}>
+              <span>
+                {source.kind === "task" ? (
+                  <ListChecks size={12} />
+                ) : (
+                  <NotebookPen size={12} />
+                )}
+                {source.title}
+              </span>
+              <ArrowUpRight size={12} />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Execution({
   message,
   isZh,
@@ -212,6 +361,9 @@ function Execution({
   const [expanded, setExpanded] = useState<boolean | null>(null);
   const running = message.state === "working";
   const activities = message.activities || [];
+  const lastResponse = [...activities]
+    .reverse()
+    .find((item) => item.phase === "response" && item.text);
   const current = [...activities]
     .reverse()
     .find((item) => item.status === "running");
@@ -269,6 +421,16 @@ function Execution({
               <div>
                 <span>{item.label}</span>
                 {item.detail && <p>{item.detail}</p>}
+                {item.text &&
+                  !(
+                    !running &&
+                    item === lastResponse &&
+                    item.text.trim() === message.content.trim()
+                  ) && (
+                    <div className="execution-reply">
+                      <ReplyText text={item.text} />
+                    </div>
+                  )}
               </div>
             </li>
           ))}
@@ -295,6 +457,9 @@ export default function ChatPage({
   cancel,
   settings,
   openMemo,
+  openTask,
+  permissionMode,
+  setPermissionMode,
   memoTitles,
   attachments,
   addFiles,
@@ -318,6 +483,9 @@ export default function ChatPage({
   cancel: () => void;
   settings: () => void;
   openMemo: (id: string) => void;
+  openTask: (id: string) => void;
+  permissionMode: "confirm" | "auto";
+  setPermissionMode: (mode: "confirm" | "auto") => void;
   memoTitles: Record<string, string>;
   attachments: DraftAttachment[];
   addFiles: (files: globalThis.File[]) => void;
@@ -375,7 +543,10 @@ export default function ChatPage({
   }
   const unseenProposals = proposals.filter(
     (p) =>
-      p.status === "pending" && !messages.some((m) => m.proposalId === p.id),
+      p.status === "pending" &&
+      !messages.some(
+        (m) => m.proposalId === p.id || m.appliedProposalIds?.includes(p.id),
+      ),
   );
   useLayoutEffect(() => {
     if (!visible) return;
@@ -512,10 +683,18 @@ export default function ChatPage({
               aria-live="off"
             >
               {messages.map((message) => {
-                const proposal = proposals.find(
-                  (p) => p.id === message.proposalId,
+                const proposalIds = Array.from(
+                  new Set([
+                    ...(message.appliedProposalIds || []),
+                    ...(message.proposalId ? [message.proposalId] : []),
+                  ]),
                 );
-                const status = proposal?.status;
+                const legacyMemoIds = message.memoIds?.filter(
+                  (id) =>
+                    !message.sources?.some(
+                      (source) => source.kind === "memo" && source.id === id,
+                    ),
+                );
                 return (
                   <article
                     key={message.id}
@@ -585,31 +764,44 @@ export default function ChatPage({
                         <span aria-hidden="true"> ···</span>
                       </div>
                     )}
-                    {message.memoId && (
-                      <button
-                        className="conversation-memo-link"
-                        onClick={() => openMemo(message.memoId!)}
-                      >
-                        <span className="memo-link-icon">
-                          <NotebookPen size={18} />
-                        </span>
-                        <span>
-                          <strong>
-                            {text("已留下这份内容", "Saved for later")}
-                          </strong>
-                          <small>
-                            {text(
-                              "查看原文与附件",
-                              "Open text and attachments",
-                            )}
-                          </small>
-                        </span>
-                        <ArrowUpRight size={16} />
-                      </button>
+                    {!!message.sources?.length && (
+                      <SourceCards
+                        sources={message.sources}
+                        isZh={isZh}
+                        openMemo={openMemo}
+                        openTask={openTask}
+                      />
                     )}
-                    {!!message.memoIds?.length && (
+                    {message.memoId &&
+                      !message.sources?.some(
+                        (source) =>
+                          source.kind === "memo" &&
+                          source.id === message.memoId,
+                      ) && (
+                        <button
+                          className="conversation-memo-link"
+                          onClick={() => openMemo(message.memoId!)}
+                        >
+                          <span className="memo-link-icon">
+                            <NotebookPen size={18} />
+                          </span>
+                          <span>
+                            <strong>
+                              {text("已留下这份内容", "Saved for later")}
+                            </strong>
+                            <small>
+                              {text(
+                                "查看原文与附件",
+                                "Open text and attachments",
+                              )}
+                            </small>
+                          </span>
+                          <ArrowUpRight size={16} />
+                        </button>
+                      )}
+                    {!!legacyMemoIds?.length && (
                       <div className="conversation-memo-sources">
-                        {message.memoIds.map((id, i) => (
+                        {legacyMemoIds.map((id, i) => (
                           <button key={id} onClick={() => openMemo(id)}>
                             <NotebookPen size={12} />
                             {memoTitles[id] ||
@@ -619,40 +811,49 @@ export default function ChatPage({
                         ))}
                       </div>
                     )}
-                    {message.proposalId && (
-                      <button
-                        className={`conversation-proposal ${status || "pending"}`}
-                        onClick={() => review(message.proposalId!)}
-                      >
-                        <span className="proposal-icon">
-                          {status === "applied" ? (
-                            <Check size={18} />
-                          ) : (
-                            <ListChecks size={18} />
-                          )}
-                        </span>
-                        <span>
-                          <strong>
-                            {status === "applied"
-                              ? text("更改已应用", "Changes applied")
-                              : status === "rejected"
-                                ? text("已取消提案", "Proposal dismissed")
-                                : status === "undone"
-                                  ? text("已撤销更改", "Changes undone")
-                                  : text("确认更改", "Review changes")}
-                          </strong>
-                          <small>
-                            {status === "pending"
-                              ? text(
-                                  "查看具体更改，由你决定是否应用",
-                                  "Review the changes before applying",
-                                )
-                              : text("查看详情", "View details")}
-                          </small>
-                        </span>
-                        <ArrowUpRight size={16} />
-                      </button>
-                    )}
+                    {proposalIds.map((id) => {
+                      const proposal = proposals.find((item) => item.id === id);
+                      const status =
+                        proposal?.status ||
+                        (message.appliedProposalIds?.includes(id)
+                          ? "applied"
+                          : "pending");
+                      return (
+                        <button
+                          key={id}
+                          className={`conversation-proposal ${status}`}
+                          onClick={() => review(id)}
+                        >
+                          <span className="proposal-icon">
+                            {status === "applied" ? (
+                              <Check size={18} />
+                            ) : (
+                              <ListChecks size={18} />
+                            )}
+                          </span>
+                          <span>
+                            <strong>
+                              {status === "applied"
+                                ? text("更改已应用", "Changes applied")
+                                : status === "rejected"
+                                  ? text("已取消提案", "Proposal dismissed")
+                                  : status === "undone"
+                                    ? text("已撤销更改", "Changes undone")
+                                    : text("确认更改", "Review changes")}
+                            </strong>
+                            <small>
+                              {status === "pending"
+                                ? text(
+                                    "查看具体更改，由你决定是否应用",
+                                    "Review the changes before applying",
+                                  )
+                                : text("查看详情", "View details")}
+                            </small>
+                          </span>
+                          <ArrowUpRight size={16} />
+                        </button>
+                      );
+                    })}
                     {message.notice && (
                       <p
                         className={`conversation-notice ${message.error ? "error-notice" : ""}`}
@@ -847,6 +1048,30 @@ export default function ChatPage({
                   <ArrowUpRight size={13} />
                 </button>
               )}
+              <label
+                className={`composer-permission ${permissionMode === "auto" ? "is-auto" : ""}`}
+                title={text("权限模式", "Permission mode")}
+              >
+                {permissionMode === "auto" ? (
+                  <Zap size={12} />
+                ) : (
+                  <ShieldCheck size={13} />
+                )}
+                <select
+                  aria-label={text("权限模式", "Permission mode")}
+                  value={permissionMode}
+                  disabled={busy}
+                  onChange={(event) =>
+                    setPermissionMode(event.target.value as "confirm" | "auto")
+                  }
+                >
+                  <option value="confirm">
+                    {text("逐项确认", "Ask first")}
+                  </option>
+                  <option value="auto">{text("自动执行", "Auto apply")}</option>
+                </select>
+                <ChevronDown size={11} />
+              </label>
             </div>
             <div className="composer-send-controls">
               <span className="composer-key-hint">
@@ -917,10 +1142,15 @@ export default function ChatPage({
         )}
         {!empty && (
           <div className="conversation-footnote">
-            {text(
-              "询问即回答，更改由你确认。",
-              "Answers right away. Changes with your approval.",
-            )}
+            {permissionMode === "auto"
+              ? text(
+                  "询问即回答，更改自动执行。",
+                  "Answers right away. Changes apply automatically.",
+                )
+              : text(
+                  "询问即回答，更改由你确认。",
+                  "Answers right away. Changes with your approval.",
+                )}
           </div>
         )}
       </div>

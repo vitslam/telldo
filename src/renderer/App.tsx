@@ -1,3 +1,4 @@
+import DetailCardModal, { isTopmostOverlay } from "./DetailCardModal";
 import MemoPage from "./MemoPage";
 import type { Memo, MemoAttachment } from "../shared/memo";
 import RecurringProposalDetails from "./RecurringProposalDetails";
@@ -28,7 +29,6 @@ import {
   MoreHorizontal,
   ArrowRight,
   ListChecks,
-  Undo2,
   Repeat2,
   Bell,
   Trash2,
@@ -37,6 +37,7 @@ import {
   NotebookPen,
   Paperclip,
   FolderPlus,
+  ChevronDown,
 } from "lucide-react";
 import type {
   Snapshot,
@@ -224,6 +225,16 @@ const zh: Record<string, string> = {
   "AI created a task": "AI 已创建任务",
   "Use commas, e.g. MO,WE,FR": "用逗号分隔，例如 MO,WE,FR",
   Title: "标题",
+  "Dates & reminders": "日期与提醒",
+  "Ask AI": "问问 AI",
+  "Task details": "任务详情",
+  "Permission mode": "权限模式",
+  "Ask first": "逐项确认",
+  "Auto apply": "自动执行",
+  "Auto apply lets Telldo apply task and list changes without individual approval.":
+    "自动执行模式下，Telldo 会直接应用任务和清单更改，无需逐项批准。",
+  "AI changes follow your selected permission mode.":
+    "AI 更改按你选择的权限模式执行。",
   Proposal: "提案",
   "Recurring template": "重复任务模板",
   "Show more occurrences": "显示更多实例",
@@ -261,8 +272,7 @@ function Modal({
     const keydown = (event: KeyboardEvent) => {
       const node = panel.current;
       if (!node || event.isComposing || event.defaultPrevented) return;
-      const overlays = document.querySelectorAll(".overlay");
-      if (overlays[overlays.length - 1] !== node.parentElement) return;
+      if (!isTopmostOverlay(node.parentElement)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -569,8 +579,7 @@ export default function App() {
   const task = tasks.find((t) => t.id === selected),
     currentList = lists.find((l) => l.id === view),
     pending = data?.proposals.filter((p) => p.status === "pending") || [],
-    proposal = data?.proposals.find((p) => p.id === proposalId),
-    lastApplied = data?.proposals.find((p) => p.status === "applied");
+    proposal = data?.proposals.find((p) => p.id === proposalId);
   async function addTask() {
     if (!newTask.trim() || !lists.length) return;
     await act(async () => {
@@ -859,6 +868,8 @@ export default function App() {
                 proposalId: reply.proposalId,
                 memoId: reply.memoId,
                 memoIds: reply.memoIds,
+                sources: reply.sources,
+                appliedProposalIds: reply.appliedProposalIds,
                 state: "completed",
                 activities: reply.activities || m.activities,
                 finishedAt: Date.now(),
@@ -910,8 +921,6 @@ export default function App() {
     }
   }
   function openMemo(id: string) {
-    setView("memos");
-    setSearch("");
     setSelected(null);
     setSelectedMemoId(id);
   }
@@ -1138,6 +1147,14 @@ export default function App() {
             </div>
           )}
           <ChatPage
+            openTask={(id) => {
+              setSelectedMemoId(null);
+              setSelected(id);
+            }}
+            permissionMode={data.settings.permissionMode || "confirm"}
+            setPermissionMode={(permissionMode) =>
+              void act(() => api("settings", { permissionMode }))
+            }
             openMemo={openMemo}
             memoTitles={memoTitles}
             references={references}
@@ -1190,12 +1207,7 @@ export default function App() {
               tasks.map((t) => [t.id, t.attachments || []]),
             )}
             onOpenTask={(id) => {
-              const task = tasks.find((t) => t.id === id);
-              if (task) {
-                setView(task.list_id);
-                setShowDone(true);
-                setSelected(id);
-              }
+              if (tasks.some((task) => task.id === id)) setSelected(id);
             }}
             onCompose={openConversation}
             visible={isMemoView}
@@ -1319,20 +1331,6 @@ export default function App() {
                 {t("Pending proposals")} · {pending.length}
                 <ArrowRight size={16} />
               </button>
-            )}
-            {lastApplied && (
-              <div className="undo-bar">
-                <Check size={14} />
-                {lastApplied.summary}
-                <button
-                  onClick={() =>
-                    void act(() => api("undoProposal", lastApplied.id), "Saved")
-                  }
-                >
-                  <Undo2 size={14} />
-                  {t("Undo")}
-                </button>
-              </div>
             )}
             {view === "planned" && (
               <div className="planned-container" hidden={!!search}>
@@ -1526,32 +1524,29 @@ export default function App() {
           </div>
         )}
       </main>
-      {task &&
-        !isConversation &&
-        !isMemoView &&
-        !(view === "planned" && !search) && (
-          <TaskDetail
-            onAttach={prepareTaskFiles}
-            onAsk={askTaskReference}
-            key={task.id + ":" + task.version}
-            task={task}
-            data={data}
-            zone={zone}
-            t={t}
-            close={() => setSelected(null)}
-            act={act}
-            selectTask={setSelected}
-            requestDelete={() =>
-              setConfirm({
-                message: t("Delete this task and its subtasks?"),
-                run: async () => {
-                  await api("deleteTask", task.id, task.version);
-                  setSelected(null);
-                },
-              })
-            }
-          />
-        )}
+      {task && !(view === "planned" && !search) && (
+        <TaskDetail
+          onAttach={prepareTaskFiles}
+          onAsk={askTaskReference}
+          key={task.id + ":" + task.version}
+          task={task}
+          data={data}
+          zone={zone}
+          t={t}
+          close={() => setSelected(null)}
+          act={act}
+          selectTask={setSelected}
+          requestDelete={() =>
+            setConfirm({
+              message: t("Delete this task and its subtasks?"),
+              run: async () => {
+                await api("deleteTask", task.id, task.version);
+                setSelected(null);
+              },
+            })
+          }
+        />
+      )}
       {toast && (
         <div className="toast">
           <Check size={16} />
@@ -1650,25 +1645,27 @@ export default function App() {
         />
       )}
       {confirm && (
-        <div className="overlay">
-          <div className="dialog small">
-            <h2>{confirm.message}</h2>
-            <div className="dialog-actions">
-              <button onClick={() => setConfirm(null)}>{t("Cancel")}</button>
-              <button
-                className="danger primary"
-                onClick={() =>
-                  void act(async () => {
-                    await confirm.run();
-                    setConfirm(null);
-                  })
-                }
-              >
-                {t("Delete")}
-              </button>
-            </div>
+        <Modal
+          className="small confirm-dialog"
+          labelledBy="confirm-dialog-heading"
+          close={() => setConfirm(null)}
+        >
+          <h2 id="confirm-dialog-heading">{confirm.message}</h2>
+          <div className="dialog-actions">
+            <button onClick={() => setConfirm(null)}>{t("Cancel")}</button>
+            <button
+              className="danger primary"
+              onClick={() =>
+                void act(async () => {
+                  await confirm.run();
+                  setConfirm(null);
+                })
+              }
+            >
+              {t("Delete")}
+            </button>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
@@ -1699,6 +1696,8 @@ function TaskDetail({
   onAsk?: (task: Task) => void;
 }) {
   const attachmentInput = useRef<HTMLInputElement>(null);
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<TaskPatch>({ ...task }),
     [natural, setNatural] = useState(""),
     [sub, setSub] = useState(""),
@@ -1740,10 +1739,28 @@ function TaskDetail({
   const visibleOccurrences = data.occurrences.filter(
     (o) => o.series_id === series?.id,
   );
+  const hasChanges =
+    (
+      [
+        "title",
+        "notes",
+        "list_id",
+        "priority",
+        "due_kind",
+        "due_date",
+        "due_at",
+        "time_zone",
+        "planned_date",
+        "reminder_at",
+      ] as const
+    ).some((key) => (draft[key] || "") !== (task[key] || "")) ||
+    tagText !== task.tags.join(", ");
   const save = () =>
-    act(
-      () =>
-        api(
+    act(async () => {
+      setSaveError("");
+      setSaving(true);
+      try {
+        await api(
           series ? "updateRecurring" : "updateTask",
           task.id,
           task.version,
@@ -1787,9 +1804,15 @@ function TaskDetail({
                 },
               ]
             : []),
-        ),
-      "Saved",
-    );
+        );
+        close();
+      } catch (error) {
+        setSaveError(String(error).replace(/^Error: /, ""));
+        throw error;
+      } finally {
+        setSaving(false);
+      }
+    }, "Saved");
   async function setRecurring() {
     let rule =
       repeat === "daily"
@@ -1820,23 +1843,33 @@ function TaskDetail({
     );
   }
   return (
-    <aside className="detail">
-      <div className="detail-top">
-        <span>{t("TASK DETAILS")}</span>
-        <button className="primary detail-save" onClick={() => void save()}>
-          <Check size={14} />
-          {t("Save changes")}
-        </button>
-        <button onClick={close} aria-label="Close details">
+    <DetailCardModal
+      className="detail task-detail-card"
+      labelledBy="task-card-heading"
+      close={close}
+    >
+      <div className="task-card-header">
+        <div className="task-card-context">
+          <ListChecks size={17} />
+          <span id="task-card-heading">{t("Task details")}</span>
+          <span className="task-card-context-divider">/</span>
+          <span className="task-card-list">
+            {data.lists.find((list) => list.id === task.list_id)?.name}
+          </span>
+        </div>
+        <button
+          className="task-card-close"
+          onClick={close}
+          aria-label="Close details"
+        >
           <X size={18} />
         </button>
       </div>
       <div className="detail-scroll">
-        {onAsk && (
-          <button className="text-button" onClick={() => onAsk(task)}>
-            <Sparkles size={14} />
-            {t("Ask about this todo")}
-          </button>
+        {saveError && (
+          <div className="error" role="alert">
+            {saveError}
+          </div>
         )}
         <textarea
           className="detail-title"
@@ -1844,6 +1877,7 @@ function TaskDetail({
           value={draft.title}
           onChange={(e) => set("title", e.target.value)}
           rows={2}
+          id="task-card-title"
         />
         {series && (
           <div className="pill">
@@ -1860,55 +1894,39 @@ function TaskDetail({
             rows={3}
           />
         </label>
-        <section className="detail-section task-attachment-section">
-          <h3>
-            <Paperclip size={15} />
-            {t("Attachments")}
-          </h3>
-          <div className="task-attachments">
-            {task.attachments?.map((file) => (
-              <button
-                key={file.id}
-                onClick={() =>
-                  void api("memoOpen", file.id).catch((e) =>
-                    act(async () => {
-                      throw e;
-                    }),
-                  )
-                }
-                title={file.name}
-              >
-                {file.kind === "image" ? (
-                  <img
-                    src={`telldo-memo://attachment/${file.id}`}
-                    alt={file.name}
-                  />
-                ) : (
-                  <Paperclip size={17} />
-                )}
-                <span>{file.name}</span>
-              </button>
-            ))}
-          </div>
-          <input
-            hidden
-            ref={attachmentInput}
-            type="file"
-            multiple
-            onChange={(event) => {
-              const files = Array.from(event.target.files || []);
-              if (files.length) onAttach?.(task, files);
-              event.target.value = "";
-            }}
-          />
-          <button
-            className="text-button"
-            onClick={() => attachmentInput.current?.click()}
-          >
-            <Plus size={14} />
-            {t("Add attachments in conversation")}
-          </button>
-        </section>
+        {!!task.attachments?.length && (
+          <section className="detail-section task-attachment-section">
+            <h3>
+              <Paperclip size={15} />
+              {t("Attachments")}
+            </h3>
+            <div className="task-attachments">
+              {task.attachments?.map((file) => (
+                <button
+                  key={file.id}
+                  onClick={() =>
+                    void api("memoOpen", file.id).catch((e) =>
+                      act(async () => {
+                        throw e;
+                      }),
+                    )
+                  }
+                  title={file.name}
+                >
+                  {file.kind === "image" ? (
+                    <img
+                      src={`telldo-memo://attachment/${file.id}`}
+                      alt={file.name}
+                    />
+                  ) : (
+                    <Paperclip size={17} />
+                  )}
+                  <span>{file.name}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         <div className="form-grid">
           <label>
             {t("List")}
@@ -1944,410 +1962,513 @@ function TaskDetail({
             )}
           </p>
         )}
-        {calendarDates || (
-          <>
-            <label>
-              {t("Natural date")}
-              <div className="inline-input">
-                <input
-                  placeholder="明天下午 3 点 / 下周五"
-                  value={natural}
-                  onChange={(e) => setNatural(e.target.value)}
-                />
-                <button
-                  onClick={() =>
-                    void act(async () => {
-                      const parsed = await api<TaskPatch>("parseDate", natural);
-                      setDraft((d) => ({
-                        ...d,
-                        due_kind: parsed.due_kind,
-                        due_date: parsed.due_date,
-                        due_at: parsed.due_at,
-                        time_zone: parsed.time_zone,
-                      }));
-                    })
-                  }
-                >
-                  {t("Parse")}
-                </button>
-              </div>
-            </label>
-            <label>
-              {t("Due date")}
-              <select
-                value={draft.due_kind}
-                onChange={(e) =>
-                  setDraft((d) => ({
-                    ...d,
-                    due_kind: e.target.value as Task["due_kind"],
-                    due_date: d.due_date || localDay(zone),
-                  }))
-                }
-              >
-                <option value="none">{t("No date")}</option>
-                <option value="date">{t("Date only")}</option>
-                <option value="datetime">{t("Date & time")}</option>
-              </select>
-            </label>
-            {draft.due_kind === "date" && (
-              <input
-                type="date"
-                aria-label="Due calendar date"
-                value={draft.due_date || ""}
-                onChange={(e) => set("due_date", e.target.value)}
-              />
-            )}
-            {draft.due_kind === "datetime" && (
+        <details
+          className="task-card-disclosure"
+          open={calendarDates ? true : undefined}
+        >
+          <summary>
+            <CalendarDays size={16} />
+            <span>{t("Dates & reminders")}</span>
+            <span className="task-card-summary">
+              {draft.due_kind === "none" ? t("No date") : draft.due_date || ""}
+            </span>
+            <ChevronDown size={15} />
+          </summary>
+          <div className="task-card-disclosure-body">
+            {calendarDates || (
               <>
                 <label>
-                  {t("Date & time")}
-                  <input
-                    type="datetime-local"
-                    value={
-                      draft.due_at
-                        ? DateTime.fromISO(draft.due_at)
-                            .setZone(draft.time_zone || zone)
-                            .toFormat("yyyy-MM-dd'T'HH:mm")
-                        : ""
-                    }
-                    onChange={(e) => {
-                      const dt = DateTime.fromISO(e.target.value, {
-                        zone: draft.time_zone || zone,
-                      });
-                      setDraft((d) => ({
-                        ...d,
-                        due_at: dt.toUTC().toISO(),
-                        due_date: dt.toISODate(),
-                        time_zone: d.time_zone || zone,
-                      }));
-                    }}
-                  />
+                  {t("Natural date")}
+                  <div className="inline-input">
+                    <input
+                      placeholder="明天下午 3 点 / 下周五"
+                      value={natural}
+                      onChange={(e) => setNatural(e.target.value)}
+                    />
+                    <button
+                      onClick={() =>
+                        void act(async () => {
+                          const parsed = await api<TaskPatch>(
+                            "parseDate",
+                            natural,
+                          );
+                          setDraft((d) => ({
+                            ...d,
+                            due_kind: parsed.due_kind,
+                            due_date: parsed.due_date,
+                            due_at: parsed.due_at,
+                            time_zone: parsed.time_zone,
+                          }));
+                        })
+                      }
+                    >
+                      {t("Parse")}
+                    </button>
+                  </div>
                 </label>
                 <label>
-                  {t("Timezone (IANA)")}
-                  <input
-                    value={draft.time_zone || zone}
+                  {t("Due date")}
+                  <select
+                    value={draft.due_kind}
                     onChange={(e) =>
                       setDraft((d) => ({
                         ...d,
-                        time_zone: e.target.value,
-                        due_date:
-                          d.due_at &&
-                          DateTime.fromISO(d.due_at).setZone(e.target.value)
-                            .isValid
-                            ? DateTime.fromISO(d.due_at)
-                                .setZone(e.target.value)
-                                .toISODate()
-                            : d.due_date,
+                        due_kind: e.target.value as Task["due_kind"],
+                        due_date: d.due_date || localDay(zone),
                       }))
                     }
-                  />
+                  >
+                    <option value="none">{t("No date")}</option>
+                    <option value="date">{t("Date only")}</option>
+                    <option value="datetime">{t("Date & time")}</option>
+                  </select>
                 </label>
-              </>
-            )}
-            <div className="form-grid">
-              <label>
-                {t("Planned date")}
-                <input
-                  type="date"
-                  value={draft.planned_date || ""}
-                  onChange={(e) => set("planned_date", e.target.value)}
-                />
-              </label>
-              <label>
-                {t("Reminder")}
-                <input
-                  aria-label="Reminder"
-                  type="datetime-local"
-                  value={
-                    draft.reminder_at
-                      ? DateTime.fromISO(draft.reminder_at)
-                          .setZone(draft.time_zone || zone)
-                          .toFormat("yyyy-MM-dd'T'HH:mm")
-                      : ""
-                  }
-                  onChange={(e) =>
-                    set(
-                      "reminder_at",
-                      e.target.value
-                        ? DateTime.fromISO(e.target.value, {
+                {draft.due_kind === "date" && (
+                  <input
+                    type="date"
+                    aria-label="Due calendar date"
+                    value={draft.due_date || ""}
+                    onChange={(e) => set("due_date", e.target.value)}
+                  />
+                )}
+                {draft.due_kind === "datetime" && (
+                  <>
+                    <label>
+                      {t("Date & time")}
+                      <input
+                        type="datetime-local"
+                        value={
+                          draft.due_at
+                            ? DateTime.fromISO(draft.due_at)
+                                .setZone(draft.time_zone || zone)
+                                .toFormat("yyyy-MM-dd'T'HH:mm")
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const dt = DateTime.fromISO(e.target.value, {
                             zone: draft.time_zone || zone,
-                          })
-                            .toUTC()
-                            .toISO()
-                        : null,
-                    )
-                  }
-                />
-              </label>
-            </div>
-          </>
-        )}
-        <label>
-          {t("Tags")}
-          <input
-            placeholder={t("Comma separated")}
-            value={tagText}
-            onChange={(e) => setTagText(e.target.value)}
-          />
-        </label>
-        <section className="detail-section">
-          <h3>
-            <ListChecks size={16} />
-            {t("Subtasks")}
-          </h3>
-          {!task.parent_id && (
-            <>
-              {data.tasks
-                .filter((s) => s.parent_id === task.id)
-                .map((s) => (
-                  <div className="subtask" key={s.id}>
-                    <button
-                      className={`check-button ${s.status === "done" ? "checked" : ""}`}
-                      onClick={() =>
-                        void act(() =>
-                          api("updateTask", s.id, s.version, {
-                            status: s.status === "todo" ? "done" : "todo",
-                          }),
-                        )
-                      }
-                    >
-                      {s.status === "done" && <Check size={12} />}
-                    </button>
-                    <button
-                      aria-label="Open subtask details"
-                      onClick={() => selectTask(s.id)}
-                    >
-                      <ArrowUpRight size={13} />
-                    </button>
-                    <input
-                      aria-label="Subtask title"
-                      defaultValue={s.title}
-                      onBlur={(e) => {
-                        if (e.target.value !== s.title)
-                          void act(() =>
-                            api("updateTask", s.id, s.version, {
-                              title: e.target.value,
-                            }),
-                          );
-                      }}
-                    />
-                    <button
-                      aria-label="Delete subtask"
-                      onClick={() =>
-                        void act(() => api("deleteTask", s.id, s.version))
-                      }
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))}
-              <div className="inline-input">
-                <input
-                  value={sub}
-                  onChange={(e) => setSub(e.target.value)}
-                  placeholder={t("Add subtask")}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && sub.trim())
-                      void act(async () => {
-                        await api("createTask", {
-                          list_id: task.list_id,
-                          parent_id: task.id,
-                          title: sub,
-                        });
-                        setSub("");
-                      });
-                  }}
-                />
-                <button
-                  disabled={!sub.trim()}
-                  onClick={() =>
-                    void act(async () => {
-                      await api("createTask", {
-                        list_id: task.list_id,
-                        parent_id: task.id,
-                        title: sub,
-                      });
-                      setSub("");
-                    })
-                  }
-                >
-                  <Plus size={16} />
-                </button>
-              </div>
-            </>
-          )}
-        </section>
-        {!task.parent_id && (
-          <section className="detail-section">
-            <h3>
-              <Repeat2 size={16} />
-              {t("Repeat")}
-            </h3>
-            {series && (
-              <>
-                <code>{series.rrule}</code>
-                <button
-                  className="text-button"
-                  onClick={() =>
-                    void act(() => api("removeRecurrence", task.id))
-                  }
-                >
-                  {t("Remove repeat")}
-                </button>
-              </>
-            )}
-            <select value={repeat} onChange={(e) => setRepeat(e.target.value)}>
-              {[
-                ["", "Does not repeat"],
-                ["daily", "Daily"],
-                ["weekdays", "Weekdays"],
-                ["weekly", "Weekly"],
-                ["monthly", "Monthly"],
-                ["monthlyWeekday", "Monthly weekday"],
-              ].map(([v, l]) => (
-                <option value={v} key={v}>
-                  {t(l)}
-                </option>
-              ))}
-            </select>
-            {repeat && (
-              <>
-                {(repeat === "weekly" || repeat === "monthlyWeekday") && (
-                  <label>
-                    {t("Weekday")}
-                    <input
-                      value={byday}
-                      onChange={(e) => setByday(e.target.value.toUpperCase())}
-                      placeholder={t("Use commas, e.g. MO,WE,FR")}
-                    />
-                  </label>
-                )}
-                {repeat === "monthly" && (
-                  <label>
-                    {t("Month day")}
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={monthday}
-                      onChange={(e) => setMonthday(e.target.value)}
-                    />
-                  </label>
-                )}
-                {repeat === "monthlyWeekday" && (
-                  <label>
-                    {t("Week position")}
-                    <select
-                      value={position}
-                      onChange={(e) => setPosition(e.target.value)}
-                    >
-                      {["1", "2", "3", "4", "-1"].map((v) => (
-                        <option value={v} key={v}>
-                          {v}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                          });
+                          setDraft((d) => ({
+                            ...d,
+                            due_at: dt.toUTC().toISO(),
+                            due_date: dt.toISODate(),
+                            time_zone: d.time_zone || zone,
+                          }));
+                        }}
+                      />
+                    </label>
+                    <label>
+                      {t("Timezone (IANA)")}
+                      <input
+                        value={draft.time_zone || zone}
+                        onChange={(e) =>
+                          setDraft((d) => ({
+                            ...d,
+                            time_zone: e.target.value,
+                            due_date:
+                              d.due_at &&
+                              DateTime.fromISO(d.due_at).setZone(e.target.value)
+                                .isValid
+                                ? DateTime.fromISO(d.due_at)
+                                    .setZone(e.target.value)
+                                    .toISODate()
+                                : d.due_date,
+                          }))
+                        }
+                      />
+                    </label>
+                  </>
                 )}
                 <div className="form-grid">
                   <label>
-                    {t("Until")}
+                    {t("Planned date")}
                     <input
                       type="date"
-                      value={until}
-                      onChange={(e) => {
-                        setUntil(e.target.value);
-                        setCount("");
-                      }}
+                      value={draft.planned_date || ""}
+                      onChange={(e) => set("planned_date", e.target.value)}
                     />
                   </label>
                   <label>
-                    {t("Count")}
+                    {t("Reminder")}
                     <input
-                      type="number"
-                      min="1"
-                      max="10000"
-                      value={count}
-                      onChange={(e) => {
-                        setCount(e.target.value);
-                        setUntil("");
-                      }}
+                      aria-label="Reminder"
+                      type="datetime-local"
+                      value={
+                        draft.reminder_at
+                          ? DateTime.fromISO(draft.reminder_at)
+                              .setZone(draft.time_zone || zone)
+                              .toFormat("yyyy-MM-dd'T'HH:mm")
+                          : ""
+                      }
+                      onChange={(e) =>
+                        set(
+                          "reminder_at",
+                          e.target.value
+                            ? DateTime.fromISO(e.target.value, {
+                                zone: draft.time_zone || zone,
+                              })
+                                .toUTC()
+                                .toISO()
+                            : null,
+                        )
+                      }
                     />
                   </label>
                 </div>
-                <button
-                  className="secondary full"
-                  onClick={() => void setRecurring()}
-                >
-                  {t("Set repeat")}
-                </button>
               </>
             )}
-            {series && (
-              <>
-                <h4>{t("Upcoming occurrences")}</h4>
-                {visibleOccurrences.slice(0, occurrenceLimit).map((o) => (
-                  <div className="occurrence" key={o.occurrence_key}>
+          </div>
+        </details>
+        <details className="task-card-disclosure">
+          <summary>
+            <Hash size={16} />
+            <span>{t("Tags")}</span>
+            <span className="task-card-summary">
+              {task.tags.length ? task.tags.join(", ") : ""}
+            </span>
+            <ChevronDown size={15} />
+          </summary>
+          <div className="task-card-disclosure-body">
+            <input
+              aria-label={t("Tags")}
+              placeholder={t("Comma separated")}
+              value={tagText}
+              onChange={(event) => setTagText(event.target.value)}
+            />
+          </div>
+        </details>
+        {!task.parent_id && (
+          <details
+            className="task-card-disclosure"
+            open={
+              data.tasks.some((item) => item.parent_id === task.id)
+                ? true
+                : undefined
+            }
+          >
+            <summary>
+              <ListChecks size={16} />
+              <span>{t("Subtasks")}</span>
+              <span className="task-card-summary">
+                {data.tasks.filter((item) => item.parent_id === task.id)
+                  .length || ""}
+              </span>
+              <ChevronDown size={15} />
+            </summary>
+            <div className="task-card-disclosure-body">
+              {!task.parent_id && (
+                <>
+                  {data.tasks
+                    .filter((s) => s.parent_id === task.id)
+                    .map((s) => (
+                      <div className="subtask" key={s.id}>
+                        <button
+                          className={`check-button ${s.status === "done" ? "checked" : ""}`}
+                          onClick={() =>
+                            void act(() =>
+                              api("updateTask", s.id, s.version, {
+                                status: s.status === "todo" ? "done" : "todo",
+                              }),
+                            )
+                          }
+                        >
+                          {s.status === "done" && <Check size={12} />}
+                        </button>
+                        <button
+                          aria-label="Open subtask details"
+                          onClick={() => selectTask(s.id)}
+                        >
+                          <ArrowUpRight size={13} />
+                        </button>
+                        <input
+                          aria-label="Subtask title"
+                          defaultValue={s.title}
+                          onBlur={(e) => {
+                            if (e.target.value !== s.title)
+                              void act(() =>
+                                api("updateTask", s.id, s.version, {
+                                  title: e.target.value,
+                                }),
+                              );
+                          }}
+                        />
+                        <button
+                          aria-label="Delete subtask"
+                          onClick={() =>
+                            void act(() => api("deleteTask", s.id, s.version))
+                          }
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  <div className="inline-input">
                     <input
-                      aria-label={t("Reschedule instance")}
-                      type="date"
-                      value={
-                        taskFromOccurrence(task, o, series.tzid).due_date ||
-                        o.due_date
-                      }
-                      onChange={(e) =>
-                        void act(() =>
-                          api(
-                            "updateOccurrence",
-                            o.series_id,
-                            o.occurrence_key,
-                            { override_date: e.target.value },
-                            o.version ?? 1,
-                          ),
-                        )
-                      }
+                      value={sub}
+                      onChange={(e) => setSub(e.target.value)}
+                      placeholder={t("Add subtask")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && sub.trim())
+                          void act(async () => {
+                            await api("createTask", {
+                              list_id: task.list_id,
+                              parent_id: task.id,
+                              title: sub,
+                            });
+                            setSub("");
+                          });
+                      }}
                     />
-                    <select
-                      aria-label="Occurrence status"
-                      value={o.status}
-                      onChange={(e) =>
-                        void act(() =>
-                          api(
-                            "updateOccurrence",
-                            o.series_id,
-                            o.occurrence_key,
-                            { status: e.target.value },
-                            o.version ?? 1,
-                          ),
-                        )
+                    <button
+                      disabled={!sub.trim()}
+                      onClick={() =>
+                        void act(async () => {
+                          await api("createTask", {
+                            list_id: task.list_id,
+                            parent_id: task.id,
+                            title: sub,
+                          });
+                          setSub("");
+                        })
                       }
                     >
-                      <option value="todo">{t("To do")}</option>
-                      <option value="done">{t("Done")}</option>
-                      <option value="skipped">{t("Skip")}</option>
-                    </select>
+                      <Plus size={16} />
+                    </button>
                   </div>
+                </>
+              )}
+            </div>
+          </details>
+        )}
+        {!task.parent_id && (
+          <details className="task-card-disclosure">
+            <summary>
+              <Repeat2 size={16} />
+              <span>{t("Repeat")}</span>
+              <span className="task-card-summary">
+                {series ? t("Recurring template") : t("Does not repeat")}
+              </span>
+              <ChevronDown size={15} />
+            </summary>
+            <div className="task-card-disclosure-body">
+              {series && (
+                <>
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      void act(() => api("removeRecurrence", task.id))
+                    }
+                  >
+                    {t("Remove repeat")}
+                  </button>
+                </>
+              )}
+              <select
+                value={repeat}
+                onChange={(e) => setRepeat(e.target.value)}
+              >
+                {[
+                  ["", "Does not repeat"],
+                  ["daily", "Daily"],
+                  ["weekdays", "Weekdays"],
+                  ["weekly", "Weekly"],
+                  ["monthly", "Monthly"],
+                  ["monthlyWeekday", "Monthly weekday"],
+                ].map(([v, l]) => (
+                  <option value={v} key={v}>
+                    {t(l)}
+                  </option>
                 ))}
-                {visibleOccurrences.length > occurrenceLimit && (
+              </select>
+              {repeat && (
+                <>
+                  {(repeat === "weekly" || repeat === "monthlyWeekday") && (
+                    <label>
+                      {t("Weekday")}
+                      <input
+                        value={byday}
+                        onChange={(e) => setByday(e.target.value.toUpperCase())}
+                        placeholder={t("Use commas, e.g. MO,WE,FR")}
+                      />
+                    </label>
+                  )}
+                  {repeat === "monthly" && (
+                    <label>
+                      {t("Month day")}
+                      <input
+                        type="number"
+                        min={1}
+                        max={31}
+                        value={monthday}
+                        onChange={(e) => setMonthday(e.target.value)}
+                      />
+                    </label>
+                  )}
+                  {repeat === "monthlyWeekday" && (
+                    <label>
+                      {t("Week position")}
+                      <select
+                        value={position}
+                        onChange={(e) => setPosition(e.target.value)}
+                      >
+                        {["1", "2", "3", "4", "-1"].map((v) => (
+                          <option value={v} key={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <div className="form-grid">
+                    <label>
+                      {t("Until")}
+                      <input
+                        type="date"
+                        value={until}
+                        onChange={(e) => {
+                          setUntil(e.target.value);
+                          setCount("");
+                        }}
+                      />
+                    </label>
+                    <label>
+                      {t("Count")}
+                      <input
+                        type="number"
+                        min="1"
+                        max="10000"
+                        value={count}
+                        onChange={(e) => {
+                          setCount(e.target.value);
+                          setUntil("");
+                        }}
+                      />
+                    </label>
+                  </div>
                   <button
                     className="secondary full"
-                    onClick={() => setOccurrenceLimit((n) => n + 24)}
+                    onClick={() => void setRecurring()}
                   >
-                    {t("Show more occurrences")} (
-                    {visibleOccurrences.length - occurrenceLimit})
+                    {t("Set repeat")}
                   </button>
-                )}
-              </>
-            )}
-          </section>
+                </>
+              )}
+              {series && (
+                <>
+                  <h4>{t("Upcoming occurrences")}</h4>
+                  {visibleOccurrences.slice(0, occurrenceLimit).map((o) => (
+                    <div className="occurrence" key={o.occurrence_key}>
+                      <input
+                        aria-label={t("Reschedule instance")}
+                        type="date"
+                        value={
+                          taskFromOccurrence(task, o, series.tzid).due_date ||
+                          o.due_date
+                        }
+                        onChange={(e) =>
+                          void act(() =>
+                            api(
+                              "updateOccurrence",
+                              o.series_id,
+                              o.occurrence_key,
+                              { override_date: e.target.value },
+                              o.version ?? 1,
+                            ),
+                          )
+                        }
+                      />
+                      <select
+                        aria-label="Occurrence status"
+                        value={o.status}
+                        onChange={(e) =>
+                          void act(() =>
+                            api(
+                              "updateOccurrence",
+                              o.series_id,
+                              o.occurrence_key,
+                              { status: e.target.value },
+                              o.version ?? 1,
+                            ),
+                          )
+                        }
+                      >
+                        <option value="todo">{t("To do")}</option>
+                        <option value="done">{t("Done")}</option>
+                        <option value="skipped">{t("Skip")}</option>
+                      </select>
+                    </div>
+                  ))}
+                  {visibleOccurrences.length > occurrenceLimit && (
+                    <button
+                      className="secondary full"
+                      onClick={() => setOccurrenceLimit((n) => n + 24)}
+                    >
+                      {t("Show more occurrences")} (
+                      {visibleOccurrences.length - occurrenceLimit})
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </details>
         )}
-        <button className="delete-task" onClick={requestDelete}>
-          <Trash2 size={15} />
-          {t("Delete task")}
+      </div>
+      <div className="task-card-footer">
+        <button
+          className="task-card-icon task-card-delete"
+          aria-label={t("Delete task")}
+          title={t("Delete task")}
+          onClick={requestDelete}
+        >
+          <Trash2 size={17} />
+        </button>
+        {onAttach && (
+          <button
+            className="task-card-icon"
+            aria-label={t("Add attachments in conversation")}
+            title={t("Add attachments in conversation")}
+            onClick={() => attachmentInput.current?.click()}
+          >
+            <Paperclip size={17} />
+          </button>
+        )}
+        {onAsk && (
+          <button className="task-card-ask" onClick={() => onAsk(task)}>
+            <Sparkles size={16} />
+            {t("Ask AI")}
+          </button>
+        )}
+        <span className="task-card-footer-space" />
+        {hasChanges && (
+          <button className="task-card-dismiss" onClick={close}>
+            {t("Close")}
+          </button>
+        )}
+        <button
+          className="primary task-card-save"
+          disabled={saving}
+          onClick={() => (hasChanges ? void save() : close())}
+        >
+          {saving ? (
+            <LoaderCircle size={15} className="spin" />
+          ) : hasChanges ? (
+            <Check size={15} />
+          ) : null}
+          {t(hasChanges ? "Save changes" : "Close")}
         </button>
       </div>
-    </aside>
+      <input
+        hidden
+        ref={attachmentInput}
+        type="file"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files || []);
+          if (files.length) onAttach?.(task, files);
+          event.target.value = "";
+        }}
+      />
+    </DetailCardModal>
   );
 }
 function SettingsDialog({
@@ -2483,6 +2604,27 @@ function SettingsDialog({
                 />
               </label>
             </div>
+            <label>
+              {t("Permission mode")}
+              <select
+                value={draft.permissionMode || "confirm"}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    permissionMode: event.target
+                      .value as Settings["permissionMode"],
+                  })
+                }
+              >
+                <option value="confirm">{t("Ask first")}</option>
+                <option value="auto">{t("Auto apply")}</option>
+              </select>
+            </label>
+            <p className="settings-help">
+              {t(
+                "Auto apply lets Telldo apply task and list changes without individual approval.",
+              )}
+            </p>
             <label className="checkbox-label">
               <input
                 type="checkbox"
@@ -2517,9 +2659,7 @@ function SettingsDialog({
               </select>
             </label>
             <p className="settings-ai-note">
-              {t(
-                "Tasks are stored locally. AI context is sent to your model provider. Review AI changes before applying them.",
-              )}
+              {t("AI changes follow your selected permission mode.")}
             </p>
             {draft.aiTransport === "local" ? (
               <label>

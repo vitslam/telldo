@@ -1,3 +1,8 @@
+import { ModelRoundProgress } from "./model-round-progress";
+import { chatSources } from "./chat-sources";
+import type { ContextScheduleItem } from "./context-repository";
+import { PermissionSession } from "./permission-session";
+import { searchProgress } from "./retrieval-progress";
 import { ContextRepository } from "./context-repository";
 import type { ContextQuery } from "../shared/context-query";
 import type { AIInputAttachment } from "../shared/ai-input";
@@ -51,6 +56,7 @@ let schedules: ScheduleService;
 let calendar: CalendarService;
 let adapter: CodexAdapter | SshCodexAdapter;
 let aiRunning = false;
+let aiCancelled = false;
 let aiProbing = false;
 let capabilities: Capabilities | null = null;
 let timer: NodeJS.Timeout;
@@ -482,6 +488,7 @@ async function dispatch(method: string, args: any[]) {
       return result;
     }
     case "cancelAI":
+      if (aiRunning) aiCancelled = true;
       adapter.cancel();
       return true;
     case "probe":
@@ -497,6 +504,16 @@ async function dispatch(method: string, args: any[]) {
     case "ask": {
       if (aiRunning || aiProbing) throw Error("Codex is busy. / Codex 正忙。");
       aiRunning = true;
+      aiCancelled = false;
+      const permissionMode = settings().permissionMode;
+      const permissionSession = new PermissionSession(
+        permissionMode,
+        () => aiCancelled,
+      );
+      const appliedProposalIds = permissionSession.appliedProposalIds;
+      const assertRunning = () => {
+        if (aiCancelled) throw Error("已停止 / Cancelled");
+      };
       const requestId =
         typeof args[3] === "string" ? args[3].slice(0, 80) : undefined;
       const chinese = (
@@ -508,7 +525,7 @@ async function dispatch(method: string, args: any[]) {
         send("progress", { ...event, requestId });
       };
       try {
-        const continuation =
+        let continuation =
           args[4] === undefined
             ? undefined
             : service.listProposals().find((p) => p.id === args[4]);
@@ -536,6 +553,8 @@ async function dispatch(method: string, args: any[]) {
               : null;
         const readingCaptures: Memo[] = currentCapture ? [currentCapture] : [];
         const inputFiles: AIInputAttachment[] = [];
+        let referenceRead = 0;
+        let modelRound = 0;
         const knownRefs = new Map<string, ExplicitReference>();
         const referencedRecords: Record<string, unknown>[] = [];
         const selectedTasks = new Map<
@@ -573,6 +592,31 @@ async function dispatch(method: string, args: any[]) {
             throw Error(
               "引用的附件超过本轮上限，请减少引用 / Select fewer attachments for this question",
             );
+          const image = file.kind === "image";
+          const fileProgress = (completed: boolean) =>
+            progress({
+              type: "activity",
+              id: `attachment-${file.id}`,
+              phase: "context",
+              status: completed ? "completed" : "running",
+              label: chinese
+                ? image
+                  ? completed
+                    ? "已加载原图"
+                    : "正在加载原图"
+                  : completed
+                    ? "已读取附件"
+                    : "正在读取附件"
+                : image
+                  ? completed
+                    ? "Original image loaded"
+                    : "Loading original image"
+                  : completed
+                    ? "Attachment loaded"
+                    : "Loading attachment",
+              detail: file.name.slice(0, 200),
+            });
+          fileProgress(false);
           const owned = memos.getAttachment(file.id);
           inputFiles.push({
             id: file.id,
@@ -581,6 +625,7 @@ async function dispatch(method: string, args: any[]) {
             kind: file.kind,
             bytes: new Uint8Array(await readFile(owned.path)),
           });
+          fileProgress(true);
         };
         const addReference = async (ref: ExplicitReference) => {
           if (
@@ -591,6 +636,14 @@ async function dispatch(method: string, args: any[]) {
             return;
           if (referencedRecords.length >= 4)
             throw Error("本轮最多读取 4 条引用记录");
+          const readId = `record-${++referenceRead}`;
+          progress({
+            type: "activity",
+            id: readId,
+            phase: "context",
+            status: "running",
+            label: chinese ? "正在读取记录" : "Reading record",
+          });
           const resolved = resolveReference(ref);
           knownRefs.set(`${ref.kind}:${ref.id}`, ref);
           if (resolved.task) selectedTasks.set(resolved.task.id, resolved.task);
@@ -623,6 +676,14 @@ async function dispatch(method: string, args: any[]) {
             truncated: resolved.record.text.length > keep,
             attachments: files,
           });
+          progress({
+            type: "activity",
+            id: readId,
+            phase: "context",
+            status: "completed",
+            label: chinese ? "已读取记录" : "Record read",
+            detail: `${String(resolved.record.title || "").slice(0, 200)} · ${chinese ? "正文与附件信息" : "Text and attachment metadata"}`,
+          });
           for (const file of files) await appendFile(file);
         };
         for (const ref of explicitRefs) await addReference(ref);
@@ -642,7 +703,9 @@ async function dispatch(method: string, args: any[]) {
                 : "");
         if (!text || text.length > 4000)
           throw Error("Please enter text or select a reference");
-        const lists = contexts.lists(30);
+        let lists = contexts.lists(30);
+        const appliedHistory: { role: "assistant"; content: string }[] = [];
+        let searchCount = 0;
         let retrieved: Record<string, unknown> = {};
         let retrievalReads = 0;
         const refreshContext = () => ({
@@ -650,10 +713,11 @@ async function dispatch(method: string, args: any[]) {
           now: DateTime.now().setZone(zone()).toISO(),
           timeZone: zone(),
           currentListId: args[1],
+          permissionMode,
           lists,
           contextPhase: referencedRecords.length
             ? "referenced"
-            : retrievalReads
+            : retrievalReads || selectedTasks.size || selectedMemos.size
               ? "result"
               : "plan",
           ...retrieved,
@@ -682,7 +746,10 @@ async function dispatch(method: string, args: any[]) {
             taskId: task.id,
             attachments: memos.taskAttachments(task.id),
           })),
-          conversation: args[2],
+          conversation: [
+            ...(Array.isArray(args[2]) ? args[2] : []),
+            ...appliedHistory,
+          ],
           ...(continuation
             ? {
                 continuation: {
@@ -698,206 +765,362 @@ async function dispatch(method: string, args: any[]) {
             max: 2,
           },
         });
-        const contextProgress = () =>
-          progress({
-            type: "activity",
-            id: "context",
-            phase: "context",
-            status: "completed",
-            label: chinese
-              ? referencedRecords.length
-                ? "已读取引用内容"
-                : retrievalReads
-                  ? "已读取相关结果"
-                  : "按需检索已就绪"
-              : referencedRecords.length
-                ? "Referenced content loaded"
-                : retrievalReads
-                  ? "Relevant results loaded"
-                  : "Ready for scoped retrieval",
-            detail: chinese
-              ? `${referencedRecords.length} 条引用 · ${selectedTasks.size} 个相关任务 · ${selectedMemos.size} 条资料 · ${inputFiles.filter((f) => f.kind === "image").length} 张原图`
-              : `${referencedRecords.length} references · ${selectedTasks.size} relevant tasks · ${selectedMemos.size} records · ${inputFiles.filter((f) => f.kind === "image").length} original images`,
-          });
-        contextProgress();
-        let result = await adapter.run(
-          text,
-          refreshContext(),
-          (event) => {
-            if (typeof event !== "string") progress(event);
-          },
-          inputFiles,
-        );
-        while (result.proposal.query) {
-          if (retrievalReads >= 2)
-            throw Error("请缩小查询范围后再试 / Please narrow this search");
-          const query = result.proposal.query;
-          retrievalReads++;
-          if (query.entity === "record") {
-            const key = `${query.kind}:${query.id}`;
-            if (!knownRefs.has(key))
-              throw Error(
-                "模型只能读取本轮检索到或你明确引用的记录 / Select a returned record to read its original",
-              );
-            await addReference(knownRefs.get(key)!);
-          } else {
-            const data = contexts.retrieve(query);
-            retrieved = { ...retrieved, ...data };
-            for (const task of data.tasks || []) {
-              selectedTasks.set(task.id, task);
-              knownRefs.set(`task:${task.id}`, { kind: "task", id: task.id });
-            }
-            for (const memo of data.memoSearchResults || []) {
-              selectedMemos.set(memo.id, memo);
-              knownRefs.set(`memo:${memo.id}`, { kind: "memo", id: memo.id });
-            }
-          }
-          contextProgress();
-          result = await adapter.run(
+        const runModel = async () => {
+          assertRunning();
+          const round = new ModelRoundProgress(++modelRound, chinese, progress);
+          const result = await adapter.run(
             text,
             refreshContext(),
-            (event) => {
-              if (typeof event !== "string") progress(event);
-            },
+            round.forward,
             inputFiles,
           );
-        }
-        const chosen = [...selectedTasks.values()];
-        const response = result.proposal;
-        const allowedAssets = new Set([
-          ...inputFiles.map((f) => f.id),
-          ...chosen.flatMap((t) =>
-            memos.taskAttachments(t.id).map((f) => f.id),
-          ),
-        ]);
-        for (const id of [
-          ...(response.memo?.attachmentIds || []),
-          ...(response.assetAssignments || []).flatMap((a) => a.attachmentIds),
-        ])
-          if (!allowedAssets.has(id))
-            throw Error("Unknown attachment reference / 附件引用无效");
-        let memoId: string | undefined;
-        if (response.memo) {
-          const record = response.memo;
-          const capture =
-            currentCapture ||
-            readingCaptures.find((c) =>
-              c.attachments.some((a) => record.attachmentIds?.includes(a.id)),
-            );
-          if (capture)
-            memoId = memos.publish(capture.id, {
-              kind: "memo",
-              title: record.title,
-              summary: record.summary,
-              extracted_text: record.text,
-            }).id;
-          else {
-            const created = await memos.create({
-              text: record.text,
-              title: record.title,
-              source: "chat",
-              analysis_state: "ready",
-              idempotencyKey: `ai:${response.idempotency_key}`,
-            });
-            if (record.summary)
-              memos.setAnalysis(created.id, {
-                analysis_state: "ready",
-                summary: record.summary,
-              });
-            memoId = created.id;
-          }
-          send("memo-changed", memoId);
-        }
-        const attachmentReply = {
-          captureId: currentCapture?.id,
-          attachments: currentCapture?.attachments.map(
-            ({ id, name, kind }) => ({
-              id,
-              name,
-              kind,
-              previewUrl:
-                kind === "image" ? `telldo-memo://attachment/${id}` : undefined,
-            }),
-          ),
+          round.complete(result.proposal.summary);
+          assertRunning();
+          return result;
         };
-        if (!response.actions.length) {
-          if (currentCapture && !response.memo) {
-            memos.publish(currentCapture.id, { kind: "memo" });
+        while (true) {
+          let result = await runModel();
+          while (result.proposal.query) {
+            if (retrievalReads >= 2)
+              throw Error("请缩小查询范围后再试 / Please narrow this search");
+            assertRunning();
+            const query = result.proposal.query;
+            retrievalReads++;
+            if (query.entity === "record") {
+              const key = `${query.kind}:${query.id}`;
+              if (!knownRefs.has(key))
+                throw Error(
+                  "模型只能读取本轮检索到或你明确引用的记录 / Select a returned record to read its original",
+                );
+              await addReference(knownRefs.get(key)!);
+            } else {
+              const searchId = `search-${++searchCount}`;
+              const listName = lists.find(
+                (list) => list.id === query.list_id,
+              )?.name;
+              progress(
+                searchProgress(searchId, query, chinese, undefined, listName),
+              );
+              const data = contexts.retrieve(query);
+              progress(
+                searchProgress(
+                  searchId,
+                  query,
+                  chinese,
+                  data.queryResult,
+                  listName,
+                ),
+              );
+              retrieved = { ...retrieved, ...data };
+              for (const task of data.tasks || []) {
+                selectedTasks.set(task.id, task);
+                knownRefs.set(`task:${task.id}`, { kind: "task", id: task.id });
+              }
+              for (const memo of data.memoSearchResults || []) {
+                selectedMemos.set(memo.id, memo);
+                knownRefs.set(`memo:${memo.id}`, { kind: "memo", id: memo.id });
+              }
+            }
+            result = await runModel();
+          }
+          const chosen = [...selectedTasks.values()];
+          const response = result.proposal;
+          const allowedAssets = new Set([
+            ...inputFiles.map((f) => f.id),
+            ...chosen.flatMap((t) =>
+              memos.taskAttachments(t.id).map((f) => f.id),
+            ),
+          ]);
+          for (const id of [
+            ...(response.memo?.attachmentIds || []),
+            ...(response.assetAssignments || []).flatMap(
+              (a) => a.attachmentIds,
+            ),
+          ])
+            if (!allowedAssets.has(id))
+              throw Error("Unknown attachment reference / 附件引用无效");
+          let memoId: string | undefined;
+          if (response.memo) {
+            const record = response.memo;
+            const capture =
+              currentCapture ||
+              readingCaptures.find((c) =>
+                c.attachments.some((a) => record.attachmentIds?.includes(a.id)),
+              );
+            if (capture)
+              memoId = memos.publish(capture.id, {
+                kind: "memo",
+                title: record.title,
+                summary: record.summary,
+                extracted_text: record.text,
+              }).id;
+            else {
+              const created = await memos.create({
+                text: record.text,
+                title: record.title,
+                source: "chat",
+                analysis_state: "ready",
+                idempotencyKey: `ai:${response.idempotency_key}`,
+              });
+              if (record.summary)
+                memos.setAnalysis(created.id, {
+                  analysis_state: "ready",
+                  summary: record.summary,
+                });
+              memoId = created.id;
+            }
+            send("memo-changed", memoId);
+          }
+          const attachmentReply = {
+            sources: chatSources(
+              [...selectedTasks.values()],
+              [...selectedMemos.values()],
+              lists,
+              (id) => memos.taskAttachments(id),
+              (
+                retrieved.readOnlySchedule as
+                  { instances?: ContextScheduleItem[] } | undefined
+              )?.instances || [],
+            ),
+            captureId: currentCapture?.id,
+            attachments: currentCapture?.attachments.map(
+              ({ id, name, kind }) => ({
+                id,
+                name,
+                kind,
+                previewUrl:
+                  kind === "image"
+                    ? `telldo-memo://attachment/${id}`
+                    : undefined,
+              }),
+            ),
+          };
+          if (!response.actions.length) {
+            if (
+              currentCapture &&
+              !response.memo &&
+              !continuation &&
+              !appliedProposalIds.length
+            ) {
+              memos.publish(currentCapture.id, { kind: "memo" });
+              send("memo-changed", currentCapture.id);
+            }
+            return {
+              kind: response.memo ? "memo" : "answer",
+              message: response.summary,
+              memoId,
+              ...attachmentReply,
+              appliedProposalIds,
+              memoIds: [...selectedMemos.values()]
+                .filter(
+                  (m) =>
+                    selectedMemoIds.has(m.id) ||
+                    response.summary.includes(m.title),
+                )
+                .slice(0, 3)
+                .map((m) => m.id),
+              activities: [...activities.values()],
+            };
+          }
+          const body = {
+            version: response.version,
+            summary: response.summary,
+            idempotency_key: response.idempotency_key,
+            risk: response.risk,
+            actions: response.actions,
+          };
+          const proposal = service.db.transaction(() => {
+            const proposal = service.saveProposal(
+              body,
+              text,
+              result.raw,
+              chosen.map((t) => t.id),
+            );
+            service.db
+              .prepare("INSERT OR REPLACE INTO proposal_references VALUES(?,?)")
+              .run(
+                proposal.id,
+                JSON.stringify(
+                  [...knownRefs.values()].filter((ref) =>
+                    referencedRecords.some(
+                      (r) => r.kind === ref.kind && r.id === ref.id,
+                    ),
+                  ),
+                ),
+              );
+            for (const assignment of response.assetAssignments || [])
+              for (const id of assignment.attachmentIds)
+                service.db
+                  .prepare(
+                    "INSERT OR IGNORE INTO proposal_assets VALUES(?,?,?)",
+                  )
+                  .run(proposal.id, assignment.actionIndex, id);
+            return proposal;
+          })();
+          if (currentCapture) {
+            memos.linkProposal(currentCapture.id, proposal.id);
+            memos.publish(currentCapture.id, {
+              kind: response.memo ? "memo" : "task",
+            });
             send("memo-changed", currentCapture.id);
           }
+          if (permissionMode === "auto") {
+            assertRunning();
+            const activityId = `apply-${appliedProposalIds.length + 1}`;
+            const decision = permissionSession.apply(proposal, () => {
+              progress({
+                type: "activity",
+                id: activityId,
+                phase: "validation",
+                status: "running",
+                label: chinese ? "正在应用更改" : "Applying changes",
+                detail: proposal.summary,
+              });
+              return service.applyProposal(proposal.id, true);
+            });
+            if (decision.kind === "limit") {
+              progress({
+                type: "activity",
+                id: "permission-limit",
+                phase: "validation",
+                status: "completed",
+                label: chinese
+                  ? "已达到本轮自动执行上限"
+                  : "Automatic step limit reached",
+                detail: chinese
+                  ? "已应用8步更改，下一项提案已保留，等待你确认。"
+                  : "Applied 8 change steps. The next proposal was kept for your approval.",
+              });
+              return {
+                kind: "proposal",
+                message: chinese
+                  ? `已应用本轮 8 步更改。下一项提案已保留，请确认后继续：${proposal.summary}`
+                  : `Applied 8 change steps. Review the next retained proposal to continue: ${proposal.summary}`,
+                proposalId: proposal.id,
+                ...attachmentReply,
+                appliedProposalIds,
+                memoId,
+                activities: [...activities.values()],
+              };
+            }
+            if (decision.kind === "duplicate") {
+              return {
+                kind: "answer",
+                message: chinese
+                  ? "此更改已应用，未重复执行。"
+                  : "This change was already applied; it was not repeated.",
+                ...attachmentReply,
+                appliedProposalIds,
+                memoId,
+                activities: [...activities.values()],
+              };
+            }
+            const applied = decision.proposal;
+            bindProposalAssets(applied);
+            send("changed", null);
+            send("memo-changed", null);
+            progress({
+              type: "activity",
+              id: activityId,
+              phase: "validation",
+              status: "completed",
+              label: chinese
+                ? "更改已自动应用"
+                : "Changes applied automatically",
+              detail: applied.summary,
+            });
+            continuation = applied;
+            appliedHistory.push({
+              role: "assistant",
+              content: chinese
+                ? `已应用更改：${applied.summary}`
+                : `Applied changes: ${applied.summary}`,
+            });
+            lists = contexts.lists(30);
+            const changedIds = new Set([
+              ...selectedTasks.keys(),
+              ...proposalTaskTargets(applied).filter(
+                (id): id is string => !!id,
+              ),
+            ]);
+            for (const id of changedIds) {
+              try {
+                const task = service.getTask(id);
+                selectedTasks.set(id, task);
+                knownRefs.set(`task:${id}`, { kind: "task", id });
+              } catch {
+                selectedTasks.delete(id);
+                knownRefs.delete(`task:${id}`);
+              }
+            }
+            let referenceBudget = Math.max(
+              0,
+              24000 -
+                referencedRecords
+                  .filter((record) => record.kind !== "task")
+                  .reduce(
+                    (total, record) => total + String(record.text || "").length,
+                    0,
+                  ),
+            );
+            for (
+              let index = referencedRecords.length - 1;
+              index >= 0;
+              index--
+            ) {
+              const record = referencedRecords[index];
+              if (record.kind !== "task") continue;
+              const id = String(record.id);
+              if (!selectedTasks.has(id)) referencedRecords.splice(index, 1);
+              else {
+                const resolved = resolveReference({ kind: "task", id });
+                const keep = Math.min(12000, referenceBudget);
+                referenceBudget -= Math.min(keep, resolved.record.text.length);
+                referencedRecords[index] = {
+                  ...resolved.record,
+                  text: resolved.record.text.slice(0, keep),
+                  truncated: resolved.record.text.length > keep,
+                };
+              }
+            }
+            retrieved = {};
+            retrievalReads = 0;
+            continue;
+          }
+          progress({
+            type: "activity",
+            id: "validation",
+            phase: "validation",
+            status: "completed",
+            label: chinese ? "提案已就绪" : "Proposal ready",
+            detail: chinese
+              ? `${result.proposal.actions.length} 项更改等待确认，尚未应用`
+              : `${result.proposal.actions.length} changes await your approval; nothing applied`,
+          });
           return {
-            kind: response.memo ? "memo" : "answer",
-            message: response.summary,
+            kind: "proposal",
+            message: proposal.summary,
+            proposalId: proposal.id,
             memoId,
             ...attachmentReply,
-            memoIds: [...selectedMemos.values()]
-              .filter(
-                (m) =>
-                  selectedMemoIds.has(m.id) ||
-                  response.summary.includes(m.title),
-              )
-              .slice(0, 3)
-              .map((m) => m.id),
+            appliedProposalIds,
             activities: [...activities.values()],
           };
         }
-        const body = {
-          version: response.version,
-          summary: response.summary,
-          idempotency_key: response.idempotency_key,
-          risk: response.risk,
-          actions: response.actions,
-        };
-        const proposal = service.db.transaction(() => {
-          const proposal = service.saveProposal(
-            body,
-            text,
-            result.raw,
-            chosen.map((t) => t.id),
-          );
-          service.db
-            .prepare("INSERT OR REPLACE INTO proposal_references VALUES(?,?)")
-            .run(
-              proposal.id,
-              JSON.stringify(
-                [...knownRefs.values()].filter((ref) =>
-                  referencedRecords.some(
-                    (r) => r.kind === ref.kind && r.id === ref.id,
-                  ),
-                ),
-              ),
-            );
-          for (const assignment of response.assetAssignments || [])
-            for (const id of assignment.attachmentIds)
-              service.db
-                .prepare("INSERT OR IGNORE INTO proposal_assets VALUES(?,?,?)")
-                .run(proposal.id, assignment.actionIndex, id);
-          return proposal;
-        })();
-        if (currentCapture) {
-          memos.linkProposal(currentCapture.id, proposal.id);
-          memos.publish(currentCapture.id, {
-            kind: response.memo ? "memo" : "task",
-          });
-          send("memo-changed", currentCapture.id);
-        }
-        progress({
-          type: "activity",
-          id: "validation",
-          phase: "validation",
-          status: "completed",
-          label: chinese ? "提案已就绪" : "Proposal ready",
-          detail: chinese
-            ? `${result.proposal.actions.length} 项更改等待确认，尚未应用`
-            : `${result.proposal.actions.length} changes await your approval; nothing applied`,
-        });
+      } catch (error) {
+        if (!appliedProposalIds.length) throw error;
+        const reason = error instanceof Error ? error.message : String(error);
         return {
-          kind: "proposal",
-          message: proposal.summary,
-          proposalId: proposal.id,
-          memoId,
-          ...attachmentReply,
+          kind: "answer",
+          appliedProposalIds,
           activities: [...activities.values()],
+          message: aiCancelled
+            ? chinese
+              ? "已停止。此前已应用的更改已保留。"
+              : "Stopped. Changes already applied were kept."
+            : chinese
+              ? `此前已应用的更改已保留，后续执行已停止：${reason.slice(0, 500)}`
+              : `Applied changes were kept. Further execution stopped: ${reason.slice(0, 500)}`,
         };
       } finally {
         aiRunning = false;

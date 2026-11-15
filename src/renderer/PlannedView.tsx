@@ -7,6 +7,8 @@ import {
   type DragEvent,
 } from "react";
 import { DateTime } from "luxon";
+import DetailCardModal from "./DetailCardModal";
+import "./calendar-detail.css";
 import {
   CalendarDays,
   ChevronLeft,
@@ -357,6 +359,11 @@ export default function PlannedView({
   );
   const dates = active && (
     <>
+      {error && !preview && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
       <CalendarDates
         key={
           active.key +
@@ -583,7 +590,7 @@ export default function PlannedView({
           )}
         </div>
       )}
-      <div className={`planned-layout ${active || day ? "has-detail" : ""}`}>
+      <div className={`planned-layout ${day && !active ? "has-detail" : ""}`}>
         <div className="calendar-body">
           {mode === "month" ? (
             <>
@@ -750,55 +757,85 @@ export default function PlannedView({
         </div>
         {active ? (
           active.occurrence ? (
-            <aside className="detail calendar-instance">
-              <div className="detail-top">
-                <span>
-                  {text("重复任务 · 仅本次", "RECURRING · THIS OCCURRENCE")}
+            <DetailCardModal
+              className="detail calendar-instance"
+              labelledBy="calendar-instance-title"
+              close={() => setSelected(null)}
+            >
+              <div className="calendar-instance-heading">
+                <span className="calendar-instance-eyebrow">
+                  <Repeat2 size={15} />
+                  {text("重复任务 · 本次", "Recurring task · This occurrence")}
                 </span>
                 <button
-                  aria-label="Close details"
+                  className="calendar-card-close"
+                  aria-label={text("关闭详情", "Close details")}
                   onClick={() => setSelected(null)}
                 >
                   <X size={18} />
                 </button>
               </div>
-              <div className="detail-scroll">
-                <h2>{active.task.title}</h2>
-                <p className="notice">
-                  {data.lists.find((l) => l.id === active.task.list_id)?.name} ·{" "}
-                  {active.series?.rrule}
-                </p>
-                {dates}
-                <p>{active.task.notes}</p>
-                {active.task.tags.length > 0 && (
-                  <p className="task-meta">
-                    {active.task.tags.map((t) => "#" + t).join(" ")}
-                  </p>
+              <div className="detail-scroll calendar-instance-content">
+                <h2 id="calendar-instance-title">{active.task.title}</h2>
+                <div className="calendar-instance-meta">
+                  <span
+                    className="calendar-instance-list-dot"
+                    style={{
+                      background: data.lists.find(
+                        (list) => list.id === active.task.list_id,
+                      )?.color,
+                    }}
+                  />
+                  {
+                    data.lists.find((list) => list.id === active.task.list_id)
+                      ?.name
+                  }
+                  <span className="calendar-instance-separator">·</span>
+                  <span>
+                    {text("仅修改本次安排", "Changes apply to this occurrence")}
+                  </span>
+                </div>
+                {active.task.notes && (
+                  <p className="calendar-instance-notes">{active.task.notes}</p>
                 )}
-                <button
-                  className="primary full"
-                  disabled={working}
-                  onClick={() => void toggle(active)}
-                >
-                  {active.task.status === "done"
-                    ? text("恢复本次", "Reopen occurrence")
-                    : text("完成本次", "Complete occurrence")}
-                </button>
-                <button
-                  className="full"
-                  disabled={working}
-                  onClick={() => void toggle(active, true)}
-                >
-                  {text("跳过本次", "Skip occurrence")}
-                </button>
+                {active.task.tags.length > 0 && (
+                  <div className="calendar-instance-tags">
+                    {active.task.tags.map((tag) => (
+                      <span key={tag}>#{tag}</span>
+                    ))}
+                  </div>
+                )}
+                {dates}
+              </div>
+              <div className="calendar-instance-footer">
                 <button
                   className="text-button"
                   onClick={() => openTemplate(active.task)}
                 >
-                  {text("管理重复模板", "Manage recurring template")}
+                  <Repeat2 size={14} />
+                  {text("管理重复任务", "Manage recurring task")}
                 </button>
+                <div>
+                  <button
+                    className="secondary"
+                    disabled={working}
+                    onClick={() => void toggle(active, true)}
+                  >
+                    {text("跳过本次", "Skip occurrence")}
+                  </button>
+                  <button
+                    className="primary"
+                    disabled={working}
+                    onClick={() => void toggle(active)}
+                  >
+                    <Check size={15} />
+                    {active.task.status === "done"
+                      ? text("恢复本次", "Reopen occurrence")
+                      : text("完成本次", "Complete occurrence")}
+                  </button>
+                </div>
               </div>
-            </aside>
+            </DetailCardModal>
           ) : (
             renderDetails(active.task, dates, () => setSelected(null))
           )
@@ -893,14 +930,20 @@ export default function PlannedView({
         )}
       </div>
       {preview && (
-        <div className="overlay">
-          <div
-            className="dialog calendar-preview"
-            role="dialog"
-            aria-modal="true"
-            aria-label={text("确认日期修改", "Review date change")}
-          >
-            <h2>{text("确认日期修改", "Review date change")}</h2>
+        <DetailCardModal
+          className="calendar-preview-card"
+          labelledBy="calendar-preview-title"
+          close={() => {
+            if (working) return;
+            ++previewGeneration.current;
+            setPreview(null);
+            setPreviewBusy(false);
+          }}
+        >
+          <div className="calendar-preview">
+            <h2 id="calendar-preview-title">
+              {text("确认日期修改", "Review date change")}
+            </h2>
             <p>{preview.before.title}</p>
             {error && (
               <p className="error" role="alert">
@@ -1056,7 +1099,7 @@ export default function PlannedView({
               </button>
             </div>
           </div>
-        </div>
+        </DetailCardModal>
       )}
     </section>
   );
@@ -1089,67 +1132,73 @@ function CalendarDates({
   const text = (zh: string, en: string) => (isZh ? zh : en);
   return (
     <section className="calendar-date-editor">
-      <label>
-        {text("安排日期", "Planned date")}
-        <input
-          type="date"
-          aria-label={text("安排日期", "Planned date")}
-          disabled={disabled || !!row.occurrence}
-          value={planned}
-          onChange={(e) => setPlanned(e.target.value)}
-        />
-      </label>
       {!row.occurrence && (
+        <div className="calendar-date-field">
+          <label>
+            {text("安排日期", "Planned date")}
+            <input
+              type="date"
+              aria-label={text("安排日期", "Planned date")}
+              disabled={disabled}
+              value={planned}
+              onChange={(e) => setPlanned(e.target.value)}
+            />
+          </label>
+          <button
+            className="text-button"
+            disabled={disabled || planned === (row.task.planned_date || "")}
+            onClick={() => change("planned", planned || null)}
+          >
+            {text("保存安排日期", "Save planned date")}
+          </button>
+        </div>
+      )}
+      <div className="calendar-date-field">
+        <div className="calendar-due-fields">
+          <label>
+            {row.occurrence
+              ? text("本次截止日期", "Occurrence due date")
+              : text("截止日期", "Due date")}
+            <input
+              type="date"
+              aria-label={text("截止日期", "Due date")}
+              disabled={disabled}
+              value={due}
+              onChange={(e) => setDue(e.target.value)}
+            />
+          </label>
+          {row.task.due_at && (
+            <label>
+              {text("截止时刻", "Due time")}
+              <input
+                type="time"
+                aria-label={text("截止时刻", "Due time")}
+                value={wallTime}
+                disabled={disabled}
+                onChange={(e) => setWallTime(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
         <button
           className="text-button"
-          disabled={disabled || planned === (row.task.planned_date || "")}
-          onClick={() => change("planned", planned || null)}
+          disabled={
+            disabled ||
+            (due === (row.dueDate || "") && wallTime === originalTime) ||
+            (!!row.occurrence && !due) ||
+            (!!originalTime && !wallTime)
+          }
+          onClick={() =>
+            change(
+              "due",
+              due || null,
+              wallTime !== originalTime ? wallTime || undefined : undefined,
+            )
+          }
         >
-          {text("保存安排日期", "Save planned date")}
+          {text("保存截止日期", "Save due date")}
         </button>
-      )}
-      <label>
-        {row.occurrence
-          ? text("本次截止日期", "Occurrence due date")
-          : text("截止日期", "Due date")}
-        <input
-          type="date"
-          aria-label={text("截止日期", "Due date")}
-          disabled={disabled}
-          value={due}
-          onChange={(e) => setDue(e.target.value)}
-        />
-      </label>
-      <button
-        className="text-button"
-        disabled={
-          disabled ||
-          (due === (row.dueDate || "") && wallTime === originalTime) ||
-          (!!row.occurrence && !due) ||
-          (!!originalTime && !wallTime)
-        }
-        onClick={() =>
-          change(
-            "due",
-            due || null,
-            wallTime !== originalTime ? wallTime || undefined : undefined,
-          )
-        }
-      >
-        {text("保存截止日期", "Save due date")}
-      </button>
-      {row.task.due_at && (
-        <label>
-          {text("截止时刻", "Due time")}
-          <input
-            type="time"
-            aria-label={text("截止时刻", "Due time")}
-            value={wallTime}
-            disabled={disabled}
-            onChange={(e) => setWallTime(e.target.value)}
-          />
-        </label>
-      )}
+      </div>
       {row.task.due_at && (
         <p className="notice">
           {DateTime.fromISO(row.task.due_at)

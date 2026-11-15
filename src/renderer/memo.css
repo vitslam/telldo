@@ -497,37 +497,19 @@
     margin-bottom: 0;
   }
 }
-.memo-detail-overlay {
-  position: fixed;
-  inset: 0;
-  padding: 38px;
-  background: #0005;
-  backdrop-filter: blur(7px);
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.memo-detail {
+/* Detail cards share their overlay, surface and keyboard behavior with tasks. */
+.memo-detail-layout {
   display: flex;
   flex-direction: column;
-  width: 680px;
-  max-width: 100%;
-  max-height: calc(100vh - 76px);
-  border-radius: 16px;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--border);
-  box-shadow: 0 24px 80px #0003;
-  overflow: hidden;
-  outline: none;
+  min-height: 0;
+  max-height: inherit;
 }
 .memo-detail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 20px 25px 14px;
+  padding: 22px 28px 18px;
   flex-shrink: 0;
 }
 .memo-detail-header > span {
@@ -535,27 +517,44 @@
   align-items: center;
   gap: 8px;
   color: var(--secondary);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 500;
 }
 .memo-detail-header > button {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   color: var(--faint);
-  border-radius: 7px;
+  border-radius: 9px;
+}
+.memo-detail-header > button:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 .memo-detail-scroll {
-  padding: 6px 32px 28px;
+  flex: 1;
+  padding: 4px 36px 32px;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 .memo-detail-date {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   color: var(--faint);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.6;
-  margin-bottom: 13px;
+  margin: 10px 0 26px;
   font-variant-numeric: tabular-nums;
+}
+.memo-detail-date > span::before {
+  content: "·";
+  margin-right: 14px;
 }
 .memo-detail input.memo-detail-title {
   font-family: inherit;
@@ -564,10 +563,10 @@
   color: var(--text);
   border: 0;
   padding: 0 0 4px;
-  margin: 0 0 16px;
+  margin: 0;
   border-radius: 0;
   background: transparent;
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 550;
   line-height: 1.5;
   letter-spacing: -0.6px;
@@ -578,14 +577,15 @@
 }
 .memo-detail textarea.memo-detail-body {
   width: 100%;
-  min-height: 155px;
-  max-height: 400px;
+  min-height: 148px;
+  max-height: 420px;
+  field-sizing: content;
   font-family: inherit;
   color: var(--text);
   font-size: 14px;
   line-height: 1.9;
   white-space: pre-wrap;
-  resize: vertical;
+  resize: none;
   padding: 0;
   background: transparent;
   border: 0;
@@ -601,8 +601,16 @@
 .memo-detail-attachments {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 20px;
+  gap: 14px;
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+.memo-detail-section-label {
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  margin-bottom: 2px;
 }
 .memo-detail .memo-image {
   position: relative;
@@ -611,15 +619,30 @@
   padding: 0;
   overflow: hidden;
   background: var(--subtle);
-  border-radius: 9px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  text-align: left;
 }
 .memo-detail .memo-image img {
   object-fit: contain;
   width: 100%;
   height: auto;
-  max-height: 420px;
+  min-height: 0;
+  max-height: 460px;
+  transition: none;
+}
+.memo-detail .memo-image:hover img {
+  transform: none;
 }
 .memo-detail .memo-image > span {
+  position: static;
+  padding: 10px 13px;
+  gap: 7px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.5;
   opacity: 1;
 }
 .memo-detail .memo-file-tile {
@@ -629,10 +652,14 @@
   align-items: center;
   gap: 12px;
   text-align: left;
-  border-radius: 9px;
+  border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--page);
-  padding: 12px 14px;
+  background: var(--subtle);
+  color: var(--secondary);
+  padding: 14px 16px;
+}
+.memo-detail .memo-file-tile:hover {
+  background: var(--hover);
 }
 .memo-detail-suggestion {
   display: flex;
@@ -655,8 +682,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 24px;
+  padding: 18px 28px;
   border-top: 1px solid var(--border);
+  background: var(--panel);
   flex-shrink: 0;
 }
 .memo-detail-footer > div {
@@ -666,7 +694,10 @@
 }
 .memo-delete-button {
   color: var(--faint);
-  padding: 7px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  padding: 0;
 }
 .memo-delete-button:hover {
   color: #b96350;
@@ -674,17 +705,25 @@
 }
 .memo-detail-footer .memo-ask {
   color: var(--secondary);
-  padding: 8px 10px;
-  font-size: 11px;
+  padding: 10px 12px;
+  gap: 7px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.memo-detail-footer .memo-ask:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 .memo-detail-save {
   color: var(--brand-text);
   background: var(--brand);
-  min-height: 34px;
-  padding: 8px 12px;
-  gap: 6px;
-  font-size: 11px;
-  border-radius: 7px;
+  min-height: 38px;
+  min-width: 86px;
+  padding: 10px 16px;
+  gap: 7px;
+  font-size: 12px;
+  border-radius: 10px;
 }
 .memo-detail-save:hover {
   background: var(--brand);
@@ -781,8 +820,8 @@
 }
 
 .memo-detail textarea.memo-detail-body.is-empty {
-  min-height: 58px;
-  height: 65px;
+  min-height: 48px;
+  height: 48px;
 }
 .memo-attachment-summary {
   color: var(--secondary);
@@ -1343,4 +1382,22 @@ button.content-reference-main:hover {
   .content-reference-main {
     max-width: 240px;
   }
+}
+
+@media (max-height: 740px) {
+  .memo-detail-header {
+    padding-top: 16px;
+    padding-bottom: 12px;
+  }
+  .memo-detail-date {
+    margin-bottom: 20px;
+  }
+  .memo-detail-footer {
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+}
+
+.memo-entry-card {
+  cursor: pointer;
 }

@@ -3,11 +3,13 @@ export type AIActivityPhase =
   "context" | "connection" | "model" | "response" | "validation";
 export interface AIActivity {
   type: "activity";
-  id: AIActivityPhase;
+  id: string;
   phase: AIActivityPhase;
   status: "running" | "completed";
   label: string;
   detail?: string;
+  /** Public assistant response only, never reasoning or tool payloads. */
+  text?: string;
 }
 export interface AIResponsePreview {
   type: "response";

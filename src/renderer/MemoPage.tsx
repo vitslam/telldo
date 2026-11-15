@@ -21,6 +21,7 @@ import {
 import { DateTime } from "luxon";
 import type { Task } from "../shared/types";
 import type { Memo, MemoAttachment } from "../shared/memo";
+import DetailCardModal from "./DetailCardModal";
 import "./memo.css";
 
 const invoke = <T,>(method: string, ...args: unknown[]) =>
@@ -141,9 +142,6 @@ function MemoDetail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const panel = useRef<HTMLDivElement>(null);
-  const closeRef = useRef(close);
-  closeRef.current = close;
   const userEdited = useRef(false);
   const dirty = title !== memo.title || body !== memo.body;
   useEffect(() => {
@@ -169,54 +167,11 @@ function MemoDetail({
       setBusy(false);
     }
   }
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    panel.current?.querySelector<HTMLElement>("button")?.focus();
-    function keydown(event: KeyboardEvent) {
-      if (event.isComposing || event.defaultPrevented) return;
-      const overlays = document.querySelectorAll(".overlay");
-      if (overlays[overlays.length - 1] !== panel.current?.parentElement)
-        return;
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        if (confirmDelete) setConfirmDelete(false);
-        else closeRef.current();
-      }
-      if (event.key === "Tab" && panel.current) {
-        const nodes = Array.from(
-          panel.current.querySelectorAll<HTMLElement>(
-            'button:not(:disabled),input:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
-          ),
-        ).filter((node) => node.getClientRects().length);
-        const first = nodes[0],
-          last = nodes.at(-1);
-        if (!first) {
-          event.preventDefault();
-          panel.current.focus();
-        } else if (
-          event.shiftKey &&
-          (document.activeElement === first ||
-            !panel.current.contains(document.activeElement))
-        ) {
-          event.preventDefault();
-          last?.focus();
-        } else if (
-          !event.shiftKey &&
-          (document.activeElement === last ||
-            !panel.current.contains(document.activeElement))
-        ) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    }
-    document.addEventListener("keydown", keydown);
-    return () => {
-      document.removeEventListener("keydown", keydown);
-      if (previous?.isConnected) previous.focus();
-    };
-  }, [confirmDelete]);
+  function dismiss() {
+    if (busy) return;
+    if (confirmDelete) setConfirmDelete(false);
+    else close();
+  }
   async function open(file: MemoAttachment) {
     try {
       await invoke("memoOpen", file.id);
@@ -225,19 +180,13 @@ function MemoDetail({
     }
   }
   return (
-    <div
-      className="overlay memo-detail-overlay"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !busy) close();
-      }}
+    <DetailCardModal
+      className="memo-detail"
+      labelledBy="memo-detail-heading"
+      close={dismiss}
     >
       <div
-        className="memo-detail"
-        ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="memo-detail-title"
-        tabIndex={-1}
+        className="memo-detail-layout"
         onKeyDown={(e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
             e.preventDefault();
@@ -246,21 +195,20 @@ function MemoDetail({
         }}
       >
         <header className="memo-detail-header">
-          <span>
+          <span id="memo-detail-heading">
             <NotebookPen size={15} />
             {t("内容详情", "Content details")}
           </span>
-          <button aria-label={t("关闭", "Close")} onClick={close}>
+          <button
+            aria-label={t("关闭", "Close")}
+            title={t("关闭 · Esc", "Close · Esc")}
+            disabled={busy}
+            onClick={dismiss}
+          >
             <X size={18} />
           </button>
         </header>
         <div className="memo-detail-scroll">
-          <div className="memo-detail-date">
-            {DateTime.fromISO(memo.created_at)
-              .setZone(zone)
-              .setLocale(isZh ? "zh-CN" : "en")
-              .toFormat(isZh ? "yyyy年M月d日 · HH:mm" : "MMMM d, yyyy · HH:mm")}
-          </div>
           <input
             id="memo-detail-title"
             className="memo-detail-title"
@@ -273,6 +221,24 @@ function MemoDetail({
               setTitle(e.target.value);
             }}
           />
+          <div className="memo-detail-date">
+            <time dateTime={memo.created_at}>
+              {DateTime.fromISO(memo.created_at)
+                .setZone(zone)
+                .setLocale(isZh ? "zh-CN" : "en")
+                .toFormat(
+                  isZh ? "yyyy年M月d日 · HH:mm" : "MMMM d, yyyy · HH:mm",
+                )}
+            </time>
+            {!!memo.attachments.length && (
+              <span>
+                {t(
+                  `${memo.attachments.length} 个附件`,
+                  `${memo.attachments.length} attachment${memo.attachments.length === 1 ? "" : "s"}`,
+                )}
+              </span>
+            )}
+          </div>
           <textarea
             className={`memo-detail-body ${!body && memo.attachments.length ? "is-empty" : ""}`}
             aria-label={t("正文", "Memo text")}
@@ -288,11 +254,17 @@ function MemoDetail({
             <p className="memo-attachment-summary">{memo.summary}</p>
           )}
           {!!memo.attachments.length && (
-            <div className="memo-detail-attachments">
+            <section
+              className="memo-detail-attachments"
+              aria-label={t("附件", "Attachments")}
+            >
+              <div className="memo-detail-section-label">
+                {t("附件", "Attachments")}
+              </div>
               {memo.attachments.map((file) => (
                 <AttachmentTile file={file} key={file.id} onOpen={open} />
               ))}
-            </div>
+            </section>
           )}
           {!memo.body && memo.extracted_text && (
             <details className="memo-extracted-text">
@@ -367,7 +339,10 @@ function MemoDetail({
               <button
                 className="memo-ask"
                 disabled={busy || dirty}
-                onClick={() => ask(memo)}
+                onClick={() => {
+                  close();
+                  ask(memo);
+                }}
                 title={
                   dirty ? t("先保存更改", "Save your changes first") : undefined
                 }
@@ -378,20 +353,20 @@ function MemoDetail({
             )}
             <button
               className="memo-detail-save"
-              disabled={busy || !dirty || !title.trim()}
-              onClick={() => void save()}
+              disabled={busy || (dirty && !title.trim())}
+              onClick={() => (dirty ? void save() : dismiss())}
             >
               {busy ? (
                 <LoaderCircle className="spin" size={14} />
               ) : (
                 <Check size={14} />
               )}
-              {dirty ? t("保存更改", "Save changes") : t("已保存", "Saved")}
+              {dirty ? t("保存更改", "Save changes") : t("完成", "Done")}
             </button>
           </div>
         </footer>
       </div>
-    </div>
+    </DetailCardModal>
   );
 }
 
@@ -566,13 +541,6 @@ export default function MemoPage({
     setSelected(null);
     onSelectMemo?.(null);
   }
-  async function openFile(file: MemoAttachment) {
-    try {
-      await invoke("memoOpen", file.id);
-    } catch (e) {
-      setError(message(e));
-    }
-  }
   function renderAttachments(record: TimelineEntry) {
     const images = record.attachments.filter((file) => file.kind === "image");
     const files = record.attachments.filter((file) => file.kind !== "image");
@@ -603,7 +571,7 @@ export default function MemoPage({
                 file={file}
                 compact
                 key={file.id}
-                onOpen={openFile}
+                onOpen={openRecord}
               />
             ))}
             {files.length > 2 && (
@@ -798,7 +766,15 @@ export default function MemoPage({
                         </time>
                         <span />
                       </div>
-                      <div className="memo-entry-card">
+                      <div
+                        className="memo-entry-card"
+                        onClick={(event) => {
+                          if ((event.target as Element).closest("button, a"))
+                            return;
+                          if (record.kind === "memo") openMemo(record.memo.id);
+                          else onOpenTask?.(record.task.id);
+                        }}
+                      >
                         {record.kind === "task" ? (
                           <>
                             <button
@@ -929,7 +905,7 @@ export default function MemoPage({
           {notice}
         </div>
       )}
-      {visible && detail && (
+      {detail && (visible || selectedMemoId) && (
         <MemoDetail
           key={detail.id}
           memo={detail}
