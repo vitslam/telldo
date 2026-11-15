@@ -716,8 +716,8 @@ export default function App() {
       : speech.trim() ||
         (files.length
           ? isZh
-            ? "请结合这些附件内容帮我处理。"
-            : "Help me with the attached content."
+            ? "请读取这些内容，有明确要做的事就记为待办，否则保存内容。"
+            : "Read this content. Capture a todo if it contains a clear action; otherwise keep the content."
           : sendingReferences.length
             ? isZh
               ? "请帮我回顾引用的内容。"
@@ -860,7 +860,7 @@ export default function App() {
           captureId,
           references: continuation
             ? undefined
-            : sendingReferences.map(({ kind, id }) => ({ kind, id })),
+            : sendingReferences.map(({ kind, id, asTask }) => ({ kind, id, ...(asTask ? { asTask: true } : {}) })),
           recentReferences,
         },
       );
@@ -1225,7 +1225,7 @@ export default function App() {
             selectedMemoId={selectedMemoId}
             onSelectMemo={setSelectedMemoId}
             onReviewProposal={setProposalId}
-            onAskMemo={(memo) => {
+            onAskMemo={(memo, asTask = false) => {
               setReferences(
                 (old) =>
                   [
@@ -1237,15 +1237,18 @@ export default function App() {
                       id: memo.id,
                       title: memo.title,
                       attachmentCount: memo.attachments.length,
+                      ...(asTask ? { asTask: true } : {}),
                     },
                   ].slice(-4) as ContentReference[],
               );
               setSpeech((draft) =>
-                draft.trim()
-                  ? draft
-                  : isZh
-                    ? "请帮我回顾引用的内容。"
-                    : "Review the referenced content.",
+                asTask
+                  ? (isZh ? "将这份内容设为待办，保留原文和附件。" : "Make a todo from this content, keeping its text and attachments.")
+                  : draft.trim()
+                    ? draft
+                    : isZh
+                      ? "请帮我回顾引用的内容。"
+                      : "Review the referenced content.",
               );
               openConversation();
             }}
@@ -1374,7 +1377,7 @@ export default function App() {
                       }}
                       requestDelete={() =>
                         setConfirm({
-                          message: t("Delete this task and its subtasks?"),
+                          message: t("Delete this task and its subtasks?") + (isZh ? " 关联的原始资料和附件会保留，需在时间线单独删除。" : " Linked source material and attachments are kept; delete them separately in Timeline."),
                           run: async () => {
                             await api("deleteTask", item.id, item.version);
                             close();
@@ -1547,7 +1550,7 @@ export default function App() {
           selectTask={setSelected}
           requestDelete={() =>
             setConfirm({
-              message: t("Delete this task and its subtasks?"),
+              message: t("Delete this task and its subtasks?") + (isZh ? " 关联的原始资料和附件会保留，需在时间线单独删除。" : " Linked source material and attachments are kept; delete them separately in Timeline."),
               run: async () => {
                 await api("deleteTask", task.id, task.version);
                 setSelected(null);

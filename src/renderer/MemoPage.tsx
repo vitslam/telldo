@@ -3,6 +3,8 @@ import {
   ArrowUpRight,
   Check,
   CheckCheck,
+  ListTodo,
+  CalendarDays,
   ChevronRight,
   File,
   FileText,
@@ -125,6 +127,7 @@ function MemoDetail({
   deleted,
   review,
   ask,
+  hasTask,
 }: {
   memo: Memo;
   isZh: boolean;
@@ -133,7 +136,8 @@ function MemoDetail({
   saved: (memo: Memo) => void;
   deleted: () => void;
   review?: (id: string) => void;
-  ask?: (memo: Memo) => void;
+  ask?: (memo: Memo, asTask?: boolean) => void;
+  hasTask: boolean;
 }) {
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const [title, setTitle] = useState(memo.title);
@@ -213,7 +217,7 @@ function MemoDetail({
             className="memo-detail-title"
             maxLength={200}
             aria-label={t("标题", "Title")}
-            placeholder={t("无标题备忘录", "Untitled memo")}
+            placeholder={t("未命名内容", "Untitled content")}
             value={title}
             onChange={(e) => {
               userEdited.current = true;
@@ -240,7 +244,7 @@ function MemoDetail({
           </div>
           <textarea
             className={`memo-detail-body ${!body && memo.attachments.length ? "is-empty" : ""}`}
-            aria-label={t("正文", "Memo text")}
+            aria-label={t("正文", "Content text")}
             placeholder={t("为这份内容写一点备注…", "Add a little context…")}
             value={body}
             maxLength={100000}
@@ -334,6 +338,13 @@ function MemoDetail({
             <Trash2 size={16} />
           </button>
           <div>
+            {ask && !hasTask && (
+              <button className="memo-make-task" disabled={busy || dirty}
+                title={dirty ? t("先保存更改", "Save changes first") : t("在对话中补充行动描述或日期", "Add an action or date in conversation")}
+                onClick={() => { close(); ask(memo, true); }}>
+                <ListTodo size={14} />{t("设为待办", "Make a todo")}
+              </button>
+            )}
             {ask && (
               <button
                 className="memo-ask"
@@ -404,7 +415,7 @@ export default function MemoPage({
   zone: string;
   visible?: boolean;
   onReviewProposal?: (id: string) => void;
-  onAskMemo?: (memo: Memo) => void;
+  onAskMemo?: (memo: Memo, asTask?: boolean) => void;
   selectedMemoId?: string | null;
   onSelectMemo?: (id: string | null) => void;
   lists?: MemoListOption[];
@@ -455,12 +466,18 @@ export default function MemoPage({
     return () => clearTimeout(timer);
   }, [notice]);
   const taskRecords = scope === "review" ? completedTasks : allTasks;
+  const activeTaskIds = new Set(allTasks.map(task => task.id));
+  const originalSavedAt = new Map<string, string>();
+  for (const memo of memos) for (const taskId of memo.task_ids || []) {
+    const previous = originalSavedAt.get(taskId);
+    if (!previous || memo.created_at < previous) originalSavedAt.set(taskId, memo.created_at);
+  }
   const records: TimelineEntry[] = [
     ...memos
       .filter(
         (memo) =>
           !memo.task_ids?.some((id) =>
-            allTasks.some((task) => task.id === id),
+            activeTaskIds.has(id),
           ) &&
           !(memo.capture_kind === "task" && memo.proposal_status === "pending"),
       )
@@ -474,10 +491,8 @@ export default function MemoPage({
     ...taskRecords.map((task) => ({
       kind: "task" as const,
       id: `${task.id}:${task.completed_at || task.created_at}`,
-      at:
-        task.status === "done"
-          ? task.completed_at || task.updated_at
-          : task.created_at,
+      at: originalSavedAt.has(task.id) && originalSavedAt.get(task.id)! < task.created_at
+        ? originalSavedAt.get(task.id)! : task.created_at,
       task,
       attachments: taskAttachments[task.id] || [],
     })),
@@ -597,15 +612,15 @@ export default function MemoPage({
           <div>
             <div className="memo-eyebrow">
               {t(
-                "每一件完成的事，都有迹可循",
-                "A LITTLE HISTORY OF GETTING THERE",
+                "留下的内容，随时找回",
+                "EVERYTHING YOU KEEP, IN ONE PLACE",
               )}
             </div>
             <h1>{t("时间线", "Timeline")}</h1>
             <p>
               {t(
-                "回看已经完成的事，也找回留下的内容。",
-                "Look back on what you've done, and what you've kept.",
+                "按保存时间回看内容，行动与资料都在这里。",
+                "Browse what you saved, with actions and content together.",
               )}
             </p>
           </div>
@@ -789,6 +804,11 @@ export default function MemoPage({
                                 <span className="timeline-task-heading">
                                   <span className="timeline-task-list">{lists.find(list => list.id === record.task.list_id)?.name || t("清单", "List")}</span>
                                   <h3>{record.task.title}</h3>
+                                  {record.task.due_date && <span className="timeline-task-due"><CalendarDays size={11} />
+                                    {t("截止", "Due")} {record.task.due_at
+                                      ? DateTime.fromISO(record.task.due_at).setZone(record.task.time_zone || zone).toFormat("M/d HH:mm")
+                                      : DateTime.fromISO(record.task.due_date).toFormat("M/d")}
+                                  </span>}
                                 </span>
                                 {record.task.notes && (
                                   <p>{record.task.notes}</p>
@@ -893,6 +913,7 @@ export default function MemoPage({
           }}
           review={onReviewProposal}
           ask={onAskMemo}
+          hasTask={!!detail.task_ids?.some(id => activeTaskIds.has(id))}
         />
       )}
     </section>

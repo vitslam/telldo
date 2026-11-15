@@ -1425,3 +1425,22 @@ button.content-reference-main:hover {
 .memo-entry-card > .memo-entry-files:first-child { margin-top: 0; }
 .memo-timeline-page .memo-file-info strong { font-weight: 400; }
 .memo-timeline-page .memo-day { margin-bottom: 22px; }
+
+.memo-detail-footer .memo-make-task {
+  color: var(--brand);
+  font-size: 12px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--tint);
+  white-space: nowrap;
+}
+.timeline-task-due {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 400;
+  margin-left: auto;
+  white-space: nowrap;
+}

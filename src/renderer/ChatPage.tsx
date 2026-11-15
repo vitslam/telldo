@@ -58,6 +58,7 @@ export interface ContentReference {
   id: string;
   title: string;
   attachmentCount?: number;
+  asTask?: boolean;
 }
 export interface ConversationMessage extends ChatMessage {
   attachments?: ConversationAttachment[];

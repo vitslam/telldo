@@ -211,6 +211,8 @@ interface ExplicitReference {
   kind: "memo" | "task";
   id: string;
   attachmentIds?: string[];
+  /** Set only by the user's explicit Make a todo entry point. */
+  asTask?: boolean;
 }
 function parseReferences(value: unknown): ExplicitReference[] {
   if (value === undefined) return [];
@@ -236,9 +238,12 @@ function parseReferences(value: unknown): ExplicitReference[] {
         ))
     )
       throw Error("Invalid attachment selection");
+    if (v.asTask !== undefined && (typeof v.asTask !== "boolean" || v.kind !== "memo"))
+      throw Error("Invalid content conversion / 转换内容无效");
     return {
       kind: v.kind,
       id: v.id,
+      ...(v.asTask === true ? { asTask: true } : {}),
       ...(v.attachmentIds ? { attachmentIds: v.attachmentIds } : {}),
     };
   });
@@ -320,6 +325,10 @@ function bindProposalAssets(
     .prepare("SELECT * FROM proposal_assets WHERE proposal_id=?")
     .all(proposal.id) as { action_index: number; attachment_id: string }[];
   const capture = memos.captureForProposal(proposal.id);
+  const referenceRow = service.db.prepare("SELECT references_json FROM proposal_references WHERE proposal_id=?").get(proposal.id) as { references_json: string } | undefined;
+  const converted = parseReferences(referenceRow ? JSON.parse(referenceRow.references_json) : undefined)
+    .filter(ref => ref.kind === "memo" && ref.asTask)
+    .map(ref => memos.get(ref.id));
   targets.forEach((taskId, index) => {
     if (!taskId || proposal.actions[index].type === "delete") return;
     const ids = bindings
@@ -332,7 +341,16 @@ function bindProposalAssets(
           .prepare("INSERT OR IGNORE INTO proposal_asset_effects VALUES(?,?,?)")
           .run(proposal.id, taskId, id);
     memos.attachToTask(taskId, ids);
-    if (capture && (capture.capture_kind === "task" || bindings.length))
+    if (["create", "create_recurring", "add_subtask"].includes(proposal.actions[index].type)) {
+      for (const source of converted) {
+        // An explicit conversion reuses the source; retries cannot create another association.
+        if (source.task_ids.some(id => id !== taskId && service.db.prepare("SELECT 1 FROM tasks WHERE id=? AND deleted_at IS NULL").get(id))) continue;
+        memos.attachToTask(taskId, source.attachments.map(file => file.id));
+        memos.linkTaskCapture(source.id, taskId);
+      }
+    }
+    if (capture && (capture.capture_kind === "task" || ids.length ||
+      ["create", "create_recurring", "add_subtask"].includes(proposal.actions[index].type)))
       memos.linkTaskCapture(capture.id, taskId);
   });
   if (capture?.capture_kind === "task")
@@ -552,7 +570,7 @@ async function dispatch(method: string, args: any[]) {
           input.references ??
             (persisted ? JSON.parse(persisted.references_json) : undefined),
         );
-        const currentCapture =
+        let currentCapture =
           typeof input.captureId === "string"
             ? memos.get(input.captureId, { includeStaged: true })
             : continuation
@@ -863,7 +881,7 @@ async function dispatch(method: string, args: any[]) {
               }).id;
             else {
               const created = await memos.create({
-                text: record.text,
+                text: explicitRefs.length ? record.text : text,
                 title: record.title,
                 source: "chat",
                 analysis_state: "ready",
@@ -877,6 +895,11 @@ async function dispatch(method: string, args: any[]) {
               memoId = created.id;
             }
             send("memo-changed", memoId);
+          }
+          if (!currentCapture && !explicitRefs.some(ref => ref.asTask) &&
+              response.actions.some(action => ["create", "create_recurring", "add_subtask"].includes(action.type))) {
+            currentCapture = await memos.stage({ text, source: "chat", analysis_state: "ready",
+              idempotencyKey: `source:${response.idempotency_key}` });
           }
           const attachmentReply = {
             sources: chatSources(
