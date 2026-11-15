@@ -1,3 +1,8 @@
+import { ContextRepository } from "./context-repository";
+import type { ContextQuery } from "../shared/context-query";
+import type { AIInputAttachment } from "../shared/ai-input";
+import { MemoService } from "./memo-service";
+import type { Memo } from "../shared/memo";
 import type { AIActivity, AIProgress } from "../shared/ai-progress";
 import { DateTime } from "luxon";
 import {
@@ -10,9 +15,10 @@ import {
   Menu,
   nativeImage,
   shell,
+  protocol,
 } from "electron";
 import { join } from "node:path";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { TaskService } from "./task-service";
 import { CalendarService } from "./calendar-service";
 import type { ScheduleService } from "./schedule-service";
@@ -26,6 +32,12 @@ import {
 import type { Settings, Capabilities } from "../shared/types";
 
 app.setName("Telldo");
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "telldo-memo",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+]);
 // Separate disposable storage for the acceptance harness; never touch a user's live data.
 if (process.env.TELLDO_TEST_DATA)
   app.setPath("userData", process.env.TELLDO_TEST_DATA);
@@ -33,6 +45,8 @@ let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let service: TaskService;
+let memos: MemoService;
+let contexts: ContextRepository;
 let schedules: ScheduleService;
 let calendar: CalendarService;
 let adapter: CodexAdapter | SshCodexAdapter;
@@ -174,12 +188,152 @@ function createWindow() {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void win.loadFile(join(__dirname, "../renderer/index.html"));
 }
+function memoWithStatus(memo: Memo): Memo {
+  const proposal = memo.proposal_id
+    ? service.listProposals().find((p) => p.id === memo.proposal_id)
+    : undefined;
+  return { ...memo, ...(proposal ? { proposal_status: proposal.status } : {}) };
+}
+interface ExplicitReference {
+  kind: "memo" | "task";
+  id: string;
+  attachmentIds?: string[];
+}
+function parseReferences(value: unknown): ExplicitReference[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 4)
+    throw Error("最多引用 4 条记录 / Reference up to 4 records");
+  return value.map((v) => {
+    if (
+      !v ||
+      typeof v !== "object" ||
+      !["memo", "task"].includes(v.kind) ||
+      typeof v.id !== "string" ||
+      !v.id.length ||
+      v.id.length > 200
+    )
+      throw Error("Invalid record reference / 记录引用无效");
+    if (
+      v.attachmentIds !== undefined &&
+      (!Array.isArray(v.attachmentIds) ||
+        v.attachmentIds.length > 12 ||
+        v.attachmentIds.some(
+          (id: unknown) =>
+            typeof id !== "string" || !id.length || id.length > 200,
+        ))
+    )
+      throw Error("Invalid attachment selection");
+    return {
+      kind: v.kind,
+      id: v.id,
+      ...(v.attachmentIds ? { attachmentIds: v.attachmentIds } : {}),
+    };
+  });
+}
+function resolveReference(ref: ExplicitReference) {
+  if (ref.kind === "memo") {
+    const memo = memos.get(ref.id);
+    return {
+      record: {
+        kind: "memo",
+        id: memo.id,
+        title: memo.title,
+        created_at: memo.created_at,
+        text: [memo.body, memo.extracted_text].filter(Boolean).join("\n"),
+        attachments: memo.attachments,
+      },
+      task: undefined as ReturnType<TaskService["getTask"]> | undefined,
+      memo,
+    };
+  }
+  const task = service.getTask(ref.id);
+  const rule = service.db
+    .prepare("SELECT * FROM recurrences WHERE task_id=?")
+    .get(task.id);
+  return {
+    record: {
+      kind: "task",
+      id: task.id,
+      title: task.title,
+      expected_version: task.version,
+      text: JSON.stringify({
+        notes: task.notes,
+        status: task.status,
+        due_kind: task.due_kind,
+        due_date: task.due_date,
+        due_at: task.due_at,
+        time_zone: task.time_zone,
+        tags: task.tags,
+        ...(rule
+          ? {
+              recurrence: {
+                rrule: rule.rrule,
+                dtstart: rule.dtstart,
+                tzid: rule.tzid,
+                until: rule.until,
+                count: rule.count,
+              },
+            }
+          : {}),
+      }),
+      attachments: memos.taskAttachments(task.id),
+    },
+    task,
+    memo: undefined as Memo | undefined,
+  };
+}
+function proposalTaskTargets(
+  proposal: ReturnType<TaskService["applyProposal"]>,
+) {
+  const created = service.db
+    .prepare(
+      "SELECT entity FROM audit_log WHERE proposal_id=? AND action='create' AND undo_of IS NULL ORDER BY rowid",
+    )
+    .all(proposal.id) as { entity: string }[];
+  let index = 0;
+  return proposal.actions.map((action) =>
+    action.type === "create" ||
+    action.type === "create_recurring" ||
+    action.type === "add_subtask"
+      ? created[index++]?.entity
+      : action.target_id,
+  );
+}
+function bindProposalAssets(
+  proposal: ReturnType<TaskService["applyProposal"]>,
+) {
+  const targets = proposalTaskTargets(proposal);
+  const bindings = service.db
+    .prepare("SELECT * FROM proposal_assets WHERE proposal_id=?")
+    .all(proposal.id) as { action_index: number; attachment_id: string }[];
+  const capture = memos.captureForProposal(proposal.id);
+  targets.forEach((taskId, index) => {
+    if (!taskId || proposal.actions[index].type === "delete") return;
+    const ids = bindings
+      .filter((b) => b.action_index === index)
+      .map((b) => b.attachment_id);
+    const previous = new Set(memos.taskAttachments(taskId).map((a) => a.id));
+    for (const id of ids)
+      if (!previous.has(id))
+        service.db
+          .prepare("INSERT OR IGNORE INTO proposal_asset_effects VALUES(?,?,?)")
+          .run(proposal.id, taskId, id);
+    memos.attachToTask(taskId, ids);
+    if (capture && (capture.capture_kind === "task" || bindings.length))
+      memos.linkTaskCapture(capture.id, taskId);
+  });
+  if (capture?.capture_kind === "task")
+    memos.publish(capture.id, { kind: "task" });
+}
 async function snapshot(range?: { start: string; end: string; zone: string }) {
   if (range) schedules.materializeRange(range.start, range.end, range.zone);
   else schedules.materialize();
   return {
     lists: service.listLists(),
-    tasks: service.listTasks(),
+    tasks: service.listTasks().map((task) => ({
+      ...task,
+      attachments: memos.taskAttachments(task.id),
+    })),
     recurrences: schedules.listRecurrences(),
     occurrences: schedules.listOccurrences(),
     proposals: service.listProposals(),
@@ -193,6 +347,63 @@ async function dispatch(method: string, args: any[]) {
   switch (method) {
     case "snapshot":
       return snapshot(args[0]);
+    case "memoList":
+      return memos
+        .list(typeof args[0] === "string" ? args[0] : undefined)
+        .map(memoWithStatus);
+    case "memoGet":
+      return memoWithStatus(memos.get(args[0]));
+    case "inputStage":
+      return memos.stage({
+        ...args[0],
+        source: "chat",
+        analysis_state: "ready",
+      });
+    case "inputDiscard":
+      return memos.discard(args[0]);
+    case "proposalAttachments": {
+      const rows = service.db
+        .prepare(
+          "SELECT action_index,attachment_id FROM proposal_assets WHERE proposal_id=?",
+        )
+        .all(args[0]) as { action_index: number; attachment_id: string }[];
+      const result: Record<number, unknown[]> = {};
+      for (const row of rows) {
+        try {
+          const file = memos.getAttachment(row.attachment_id);
+          (result[row.action_index] ??= []).push({
+            id: row.attachment_id,
+            name: file.name,
+            bytes: file.bytes,
+            mime: file.mime,
+            kind: file.kind,
+          });
+        } catch {}
+      }
+      return result;
+    }
+    case "memoUpdate": {
+      const memo = memos.update(args[0], args[1], args[2]);
+      send("memo-changed", memo.id);
+      return memo;
+    }
+    case "memoDelete": {
+      memos.remove(args[0], args[1]);
+      send("memo-changed", args[0]);
+      return true;
+    }
+    case "memoRestore": {
+      const memo = memos.restore(args[0]);
+      send("memo-changed", memo.id);
+      return memo;
+    }
+    case "memoOpen": {
+      const file = memos.getAttachment(args[0]);
+      const error = await shell.openPath(file.path);
+      if (error) throw Error(error);
+      return true;
+    }
+
     case "createList":
       return service.createList(args[0], args[1]);
     case "updateList":
@@ -242,12 +453,34 @@ async function dispatch(method: string, args: any[]) {
       send("changed", null);
       return result;
     }
-    case "applyProposal":
-      return service.applyProposal(args[0], true);
-    case "rejectProposal":
-      return service.rejectProposal(args[0]);
-    case "undoProposal":
-      return service.undoProposal(args[0]);
+    case "applyProposal": {
+      const result = service.applyProposal(args[0], true);
+      bindProposalAssets(result);
+      send("memo-changed", null);
+      return result;
+    }
+    case "rejectProposal": {
+      const result = service.rejectProposal(args[0]);
+      const capture = memos.captureForProposal(result.id);
+      if (capture) memos.publish(capture.id, { kind: "memo" });
+      memos.clearProposal(result.id);
+      send("memo-changed", null);
+      return result;
+    }
+    case "undoProposal": {
+      const result = service.undoProposal(args[0]);
+      const effects = service.db
+        .prepare(
+          "SELECT task_id,attachment_id FROM proposal_asset_effects WHERE proposal_id=?",
+        )
+        .all(result.id) as { task_id: string; attachment_id: string }[];
+      for (const effect of effects)
+        memos.detachFromTask(effect.task_id, [effect.attachment_id]);
+      const capture = memos.captureForProposal(result.id);
+      if (capture) memos.publish(capture.id, { kind: "memo" });
+      send("memo-changed", null);
+      return result;
+    }
     case "cancelAI":
       adapter.cancel();
       return true;
@@ -283,153 +516,371 @@ async function dispatch(method: string, args: any[]) {
           throw Error(
             "Only an applied proposal can be continued / 请先确认并应用提案",
           );
+        const input = args[5] && typeof args[5] === "object" ? args[5] : {};
+        const persisted = continuation
+          ? (service.db
+              .prepare(
+                "SELECT references_json FROM proposal_references WHERE proposal_id=?",
+              )
+              .get(continuation.id) as { references_json: string } | undefined)
+          : undefined;
+        const explicitRefs = parseReferences(
+          input.references ??
+            (persisted ? JSON.parse(persisted.references_json) : undefined),
+        );
+        const currentCapture =
+          typeof input.captureId === "string"
+            ? memos.get(input.captureId, { includeStaged: true })
+            : continuation
+              ? memos.captureForProposal(continuation.id)
+              : null;
+        const readingCaptures: Memo[] = currentCapture ? [currentCapture] : [];
+        const inputFiles: AIInputAttachment[] = [];
+        const knownRefs = new Map<string, ExplicitReference>();
+        const referencedRecords: Record<string, unknown>[] = [];
+        const selectedTasks = new Map<
+          string,
+          ReturnType<TaskService["getTask"]>
+        >();
+        const selectedMemos = new Map<
+          string,
+          {
+            id: string;
+            title: string;
+            body: string;
+            summary: string;
+            created_at: string;
+            attachments: unknown[];
+          }
+        >();
+        const selectedMemoIds = new Set<string>();
+        const appendFile = async (file: {
+          id: string;
+          name: string;
+          mime: string;
+          bytes: number;
+          kind: "image" | "file";
+        }) => {
+          if (inputFiles.some((a) => a.id === file.id)) return;
+          if (
+            inputFiles.length >= 12 ||
+            inputFiles.reduce((n, f) => n + f.bytes.byteLength, 0) +
+              file.bytes >
+              50 * 1024 * 1024 ||
+            (file.kind === "image" &&
+              inputFiles.filter((f) => f.kind === "image").length >= 8)
+          )
+            throw Error(
+              "引用的附件超过本轮上限，请减少引用 / Select fewer attachments for this question",
+            );
+          const owned = memos.getAttachment(file.id);
+          inputFiles.push({
+            id: file.id,
+            name: file.name,
+            mime: file.mime,
+            kind: file.kind,
+            bytes: new Uint8Array(await readFile(owned.path)),
+          });
+        };
+        const addReference = async (ref: ExplicitReference) => {
+          if (
+            referencedRecords.some(
+              (r) => r.kind === ref.kind && r.id === ref.id,
+            )
+          )
+            return;
+          if (referencedRecords.length >= 4)
+            throw Error("本轮最多读取 4 条引用记录");
+          const resolved = resolveReference(ref);
+          knownRefs.set(`${ref.kind}:${ref.id}`, ref);
+          if (resolved.task) selectedTasks.set(resolved.task.id, resolved.task);
+          if (resolved.memo) {
+            selectedMemoIds.add(resolved.memo.id);
+            selectedMemos.set(resolved.memo.id, {
+              id: resolved.memo.id,
+              title: resolved.memo.title,
+              body: resolved.record.text,
+              summary: resolved.memo.summary,
+              created_at: resolved.memo.created_at,
+              attachments: resolved.memo.attachments,
+            });
+          }
+          const files = ref.attachmentIds
+            ? resolved.record.attachments.filter((a) =>
+                ref.attachmentIds!.includes(a.id),
+              )
+            : resolved.record.attachments;
+          if (ref.attachmentIds?.some((id) => !files.some((a) => a.id === id)))
+            throw Error("引用的附件已不存在 / Referenced attachment not found");
+          const used = referencedRecords.reduce(
+            (n, r) => n + String(r.text || "").length,
+            0,
+          );
+          const keep = Math.min(12000, Math.max(0, 24000 - used));
+          referencedRecords.push({
+            ...resolved.record,
+            text: resolved.record.text.slice(0, keep),
+            truncated: resolved.record.text.length > keep,
+            attachments: files,
+          });
+          for (const file of files) await appendFile(file);
+        };
+        for (const ref of explicitRefs) await addReference(ref);
+        if (currentCapture)
+          for (const file of currentCapture.attachments) await appendFile(file);
+        // Past upload IDs are contextual identifiers, not permission to send every old file.
+        const recentReferences = parseReferences(input.recentReferences);
+        for (const ref of recentReferences)
+          knownRefs.set(`${ref.kind}:${ref.id}`, ref);
         const text = continuation
           ? continuation.source_text
-          : String(args[0]).trim();
+          : String(args[0] || "").trim() ||
+            (explicitRefs.length
+              ? "请帮我回顾引用的内容。"
+              : currentCapture
+                ? "请结合这条消息中的附件内容帮我处理。"
+                : "");
         if (!text || text.length > 4000)
-          throw Error("Please enter 1–4000 characters");
-        progress({
-          type: "activity",
-          id: "context",
-          phase: "context",
-          status: "running",
-          label: chinese ? "读取本地任务" : "Reading local tasks",
-        });
-        const all = service.listTasks();
-        const recurring = new Set(
-          schedules.listRecurrences().map((r) => r.task_id),
-        );
-        const tasks = all;
-        const relevant = tasks.filter((t) => text.includes(t.title));
-        const chosen = [
-          ...new Map(
-            [
-              ...relevant,
-              ...tasks.filter((t) => t.status === "todo"),
-              ...tasks,
-            ].map((t) => [t.id, t]),
-          ).values(),
-        ].slice(0, 100);
-        const from = localDay(zone());
-        const to = DateTime.fromISO(from, { zone: zone() })
-          .plus({ days: 30 })
-          .toISODate()!;
-        schedules.materializeRange(from, to, zone());
-        const series = schedules.listRecurrences();
-        const readOnlyRecurrences = series.flatMap((rule) => {
-          const task = all.find((task) => task.id === rule.task_id);
-          if (!task) return [];
-          return [
-            {
-              task_id: task.id,
-              expected_version: task.version,
-              title: task.title,
-              list_id: task.list_id,
-              rrule: rule.rrule,
-              dtstart: rule.dtstart,
-              tzid: rule.tzid,
-              until: rule.until,
-              count: rule.count,
-              reminder_at: task.reminder_at,
-            },
-          ];
-        });
-        const instances = schedules
-          .listOccurrences()
-          .filter((o) => o.status !== "skipped")
-          .flatMap((o) => {
-            const rule = series.find((r) => r.id === o.series_id);
-            const task = all.find((t) => t.id === rule?.task_id);
-            if (!rule || !task) return [];
-            const item = taskFromOccurrence(task, o, rule.tzid);
-            return item.due_date && item.due_date >= from && item.due_date <= to
-              ? [
-                  {
-                    title: item.title,
-                    list_id: item.list_id,
-                    status: item.status,
-                    due_date: item.due_date,
-                    due_at: item.due_at,
-                    time_zone: item.time_zone,
-                  },
-                ]
-              : [];
-          });
-        progress({
-          type: "activity",
-          id: "context",
-          phase: "context",
-          status: "completed",
-          label: chinese ? "已读取任务与日程" : "Tasks and schedule loaded",
-          detail: chinese
-            ? `${chosen.length} / ${tasks.length} 个任务 · ${Math.min(instances.length, 100)} / ${instances.length} 个重复日程（${from} — ${to}） · ${zone()}`
-            : `${chosen.length} / ${tasks.length} tasks · ${Math.min(instances.length, 100)} / ${instances.length} recurring events (${from} — ${to}) · ${zone()}`,
-        });
-        const result = await adapter.run(
-          text,
-          {
-            today: localDay(zone()),
-            now: DateTime.now().setZone(zone()).toISO(),
-            timeZone: zone(),
-            currentListId: args[1],
-            lists: service.listLists().map(({ id, name }) => ({ id, name })),
-            tasks: chosen,
-            conversation: args[2],
-            continuation: continuation
-              ? {
+          throw Error("Please enter text or select a reference");
+        const lists = contexts.lists(30);
+        let retrieved: Record<string, unknown> = {};
+        let retrievalReads = 0;
+        const refreshContext = () => ({
+          today: localDay(zone()),
+          now: DateTime.now().setZone(zone()).toISO(),
+          timeZone: zone(),
+          currentListId: args[1],
+          lists,
+          contextPhase: referencedRecords.length
+            ? "referenced"
+            : retrievalReads
+              ? "result"
+              : "plan",
+          ...retrieved,
+          tasks: [...selectedTasks.values()],
+          memoSearchResults: [...selectedMemos.values()].filter(
+            (m) =>
+              !referencedRecords.some(
+                (r) => r.kind === "memo" && r.id === m.id,
+              ),
+          ),
+          referencedRecords,
+          recentReferences: recentReferences.map((ref) => ({
+            kind: ref.kind,
+            id: ref.id,
+          })),
+          inputAttachments: inputFiles.map(
+            ({ id, name, mime, kind, bytes }) => ({
+              id,
+              name,
+              mime,
+              kind,
+              bytes: bytes.byteLength,
+            }),
+          ),
+          taskAttachments: [...selectedTasks.values()].map((task) => ({
+            taskId: task.id,
+            attachments: memos.taskAttachments(task.id),
+          })),
+          conversation: args[2],
+          ...(continuation
+            ? {
+                continuation: {
                   proposalId: continuation.id,
                   status: "applied",
                   summary: continuation.summary,
-                }
-              : undefined,
-            inventory: {
-              ordinaryTotal: tasks.length,
-              ordinaryTodo: tasks.filter((t) => t.status === "todo").length,
-              ordinaryDone: tasks.filter((t) => t.status === "done").length,
-              ordinaryIncluded: chosen.length,
-              includesSubtasks: true,
-              recurringSeries: series.length,
-            },
-            readOnlyRecurrences: {
-              total: readOnlyRecurrences.length,
-              included: Math.min(readOnlyRecurrences.length, 100),
-              series: readOnlyRecurrences.slice(0, 100),
-            },
-            readOnlySchedule: {
-              from,
-              to,
-              total: instances.length,
-              included: Math.min(instances.length, 100),
-              instances: instances.slice(0, 100),
-            },
+                },
+              }
+            : {}),
+          contextReadBudget: {
+            remaining: 2 - retrievalReads,
+            used: retrievalReads,
+            max: 2,
           },
+        });
+        const contextProgress = () =>
+          progress({
+            type: "activity",
+            id: "context",
+            phase: "context",
+            status: "completed",
+            label: chinese
+              ? referencedRecords.length
+                ? "已读取引用内容"
+                : retrievalReads
+                  ? "已读取相关结果"
+                  : "按需检索已就绪"
+              : referencedRecords.length
+                ? "Referenced content loaded"
+                : retrievalReads
+                  ? "Relevant results loaded"
+                  : "Ready for scoped retrieval",
+            detail: chinese
+              ? `${referencedRecords.length} 条引用 · ${selectedTasks.size} 个相关任务 · ${selectedMemos.size} 条资料 · ${inputFiles.filter((f) => f.kind === "image").length} 张原图`
+              : `${referencedRecords.length} references · ${selectedTasks.size} relevant tasks · ${selectedMemos.size} records · ${inputFiles.filter((f) => f.kind === "image").length} original images`,
+          });
+        contextProgress();
+        let result = await adapter.run(
+          text,
+          refreshContext(),
           (event) => {
             if (typeof event !== "string") progress(event);
           },
+          inputFiles,
         );
-        if (!result.proposal.actions.length) {
-          progress({
-            type: "activity",
-            id: "validation",
-            phase: "validation",
-            status: "completed",
-            label: chinese ? "回复已就绪" : "Response ready",
-            detail: chinese
-              ? "仅查询，未修改任务"
-              : "Read-only answer; no task changes",
-          });
+        while (result.proposal.query) {
+          if (retrievalReads >= 2)
+            throw Error("请缩小查询范围后再试 / Please narrow this search");
+          const query = result.proposal.query;
+          retrievalReads++;
+          if (query.entity === "record") {
+            const key = `${query.kind}:${query.id}`;
+            if (!knownRefs.has(key))
+              throw Error(
+                "模型只能读取本轮检索到或你明确引用的记录 / Select a returned record to read its original",
+              );
+            await addReference(knownRefs.get(key)!);
+          } else {
+            const data = contexts.retrieve(query);
+            retrieved = { ...retrieved, ...data };
+            for (const task of data.tasks || []) {
+              selectedTasks.set(task.id, task);
+              knownRefs.set(`task:${task.id}`, { kind: "task", id: task.id });
+            }
+            for (const memo of data.memoSearchResults || []) {
+              selectedMemos.set(memo.id, memo);
+              knownRefs.set(`memo:${memo.id}`, { kind: "memo", id: memo.id });
+            }
+          }
+          contextProgress();
+          result = await adapter.run(
+            text,
+            refreshContext(),
+            (event) => {
+              if (typeof event !== "string") progress(event);
+            },
+            inputFiles,
+          );
+        }
+        const chosen = [...selectedTasks.values()];
+        const response = result.proposal;
+        const allowedAssets = new Set([
+          ...inputFiles.map((f) => f.id),
+          ...chosen.flatMap((t) =>
+            memos.taskAttachments(t.id).map((f) => f.id),
+          ),
+        ]);
+        for (const id of [
+          ...(response.memo?.attachmentIds || []),
+          ...(response.assetAssignments || []).flatMap((a) => a.attachmentIds),
+        ])
+          if (!allowedAssets.has(id))
+            throw Error("Unknown attachment reference / 附件引用无效");
+        let memoId: string | undefined;
+        if (response.memo) {
+          const record = response.memo;
+          const capture =
+            currentCapture ||
+            readingCaptures.find((c) =>
+              c.attachments.some((a) => record.attachmentIds?.includes(a.id)),
+            );
+          if (capture)
+            memoId = memos.publish(capture.id, {
+              kind: "memo",
+              title: record.title,
+              summary: record.summary,
+              extracted_text: record.text,
+            }).id;
+          else {
+            const created = await memos.create({
+              text: record.text,
+              title: record.title,
+              source: "chat",
+              analysis_state: "ready",
+              idempotencyKey: `ai:${response.idempotency_key}`,
+            });
+            if (record.summary)
+              memos.setAnalysis(created.id, {
+                analysis_state: "ready",
+                summary: record.summary,
+              });
+            memoId = created.id;
+          }
+          send("memo-changed", memoId);
+        }
+        const attachmentReply = {
+          captureId: currentCapture?.id,
+          attachments: currentCapture?.attachments.map(
+            ({ id, name, kind }) => ({
+              id,
+              name,
+              kind,
+              previewUrl:
+                kind === "image" ? `telldo-memo://attachment/${id}` : undefined,
+            }),
+          ),
+        };
+        if (!response.actions.length) {
+          if (currentCapture && !response.memo) {
+            memos.publish(currentCapture.id, { kind: "memo" });
+            send("memo-changed", currentCapture.id);
+          }
           return {
-            kind: "answer",
-            message: result.proposal.summary,
+            kind: response.memo ? "memo" : "answer",
+            message: response.summary,
+            memoId,
+            ...attachmentReply,
+            memoIds: [...selectedMemos.values()]
+              .filter(
+                (m) =>
+                  selectedMemoIds.has(m.id) ||
+                  response.summary.includes(m.title),
+              )
+              .slice(0, 3)
+              .map((m) => m.id),
             activities: [...activities.values()],
           };
         }
-        const proposal = service.saveProposal(
-          result.proposal,
-          text,
-          result.raw,
-          chosen.map((t) => t.id),
-        );
+        const body = {
+          version: response.version,
+          summary: response.summary,
+          idempotency_key: response.idempotency_key,
+          risk: response.risk,
+          actions: response.actions,
+        };
+        const proposal = service.db.transaction(() => {
+          const proposal = service.saveProposal(
+            body,
+            text,
+            result.raw,
+            chosen.map((t) => t.id),
+          );
+          service.db
+            .prepare("INSERT OR REPLACE INTO proposal_references VALUES(?,?)")
+            .run(
+              proposal.id,
+              JSON.stringify(
+                [...knownRefs.values()].filter((ref) =>
+                  referencedRecords.some(
+                    (r) => r.kind === ref.kind && r.id === ref.id,
+                  ),
+                ),
+              ),
+            );
+          for (const assignment of response.assetAssignments || [])
+            for (const id of assignment.attachmentIds)
+              service.db
+                .prepare("INSERT OR IGNORE INTO proposal_assets VALUES(?,?,?)")
+                .run(proposal.id, assignment.actionIndex, id);
+          return proposal;
+        })();
+        if (currentCapture) {
+          memos.linkProposal(currentCapture.id, proposal.id);
+          memos.publish(currentCapture.id, {
+            kind: response.memo ? "memo" : "task",
+          });
+          send("memo-changed", currentCapture.id);
+        }
         progress({
           type: "activity",
           id: "validation",
@@ -444,6 +895,8 @@ async function dispatch(method: string, args: any[]) {
           kind: "proposal",
           message: proposal.summary,
           proposalId: proposal.id,
+          memoId,
+          ...attachmentReply,
           activities: [...activities.values()],
         };
       } finally {
@@ -456,7 +909,15 @@ async function dispatch(method: string, args: any[]) {
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (path.canceled || !path.filePath) return null;
-      await service.exportToFile(path.filePath);
+      await writeFile(
+        path.filePath,
+        JSON.stringify(
+          { ...service.exportData(), memoArchive: await memos.exportData() },
+          null,
+          2,
+        ),
+        "utf8",
+      );
       return path.filePath;
     }
     case "import": {
@@ -466,8 +927,21 @@ async function dispatch(method: string, args: any[]) {
       });
       if (path.canceled) return null;
       const raw = await readFile(path.filePaths[0], "utf8");
-      if (raw.length > 20_000_000) throw Error("Import exceeds 20 MB");
-      return service.importData(JSON.parse(raw));
+      if (raw.length > 220_000_000) throw Error("Import exceeds 220 MB");
+      const archive = JSON.parse(raw);
+      if (archive.memoArchive) memos.validateArchive(archive.memoArchive);
+      const imported = archive.memoArchive
+        ? await memos.importData(archive.memoArchive)
+        : [];
+      try {
+        const result = service.importData(archive);
+        send("memo-changed", null);
+        return result;
+      } catch (error) {
+        for (const memo of imported) memos.remove(memo.id, memo.version);
+        send("memo-changed", null);
+        throw error;
+      }
     }
     case "backup": {
       const path = await dialog.showSaveDialog(win!, {
@@ -476,6 +950,9 @@ async function dispatch(method: string, args: any[]) {
       });
       if (path.canceled || !path.filePath) return null;
       await service.backup(path.filePath);
+      await memos.backup(
+        path.filePath.replace(/\.sqlite$/i, "") + "-memos.sqlite",
+      );
       return path.filePath;
     }
     case "openData":
@@ -492,6 +969,41 @@ else {
     .then(async () => {
       await mkdir(app.getPath("userData"), { recursive: true });
       service = new TaskService(join(app.getPath("userData"), "telldo.sqlite"));
+      memos = new MemoService(app.getPath("userData"));
+      contexts = new ContextRepository(service, memos, zone);
+      service.db.exec(
+        "CREATE TABLE IF NOT EXISTS proposal_references(proposal_id TEXT PRIMARY KEY,references_json TEXT NOT NULL)",
+      );
+      service.db.exec(
+        "CREATE TABLE IF NOT EXISTS proposal_assets(proposal_id TEXT NOT NULL,action_index INTEGER NOT NULL,attachment_id TEXT NOT NULL,PRIMARY KEY(proposal_id,action_index,attachment_id)); CREATE TABLE IF NOT EXISTS proposal_asset_effects(proposal_id TEXT NOT NULL,task_id TEXT NOT NULL,attachment_id TEXT NOT NULL,PRIMARY KEY(proposal_id,task_id,attachment_id))",
+      );
+      for (const proposal of service
+        .listProposals()
+        .filter((p) => p.status === "applied"))
+        bindProposalAssets(proposal);
+      protocol.handle("telldo-memo", async (request) => {
+        try {
+          const url = new URL(request.url);
+          if (
+            url.hostname !== "attachment" ||
+            !/^\/[a-zA-Z0-9-]+$/.test(url.pathname)
+          )
+            return new Response("Not found", { status: 404 });
+          const attachment = memos.getAttachment(url.pathname.slice(1));
+          if (attachment.kind !== "image")
+            return new Response("Preview unavailable", { status: 415 });
+          return new Response(new Uint8Array(await readFile(attachment.path)), {
+            headers: {
+              "Content-Type": attachment.mime,
+              "X-Content-Type-Options": "nosniff",
+              "Cache-Control": "no-store",
+              "Content-Security-Policy": "default-src 'none'; sandbox",
+            },
+          });
+        } catch {
+          return new Response("Not found", { status: 404 });
+        }
+      });
       schedules = service.schedules;
       calendar = new CalendarService(service);
       adapter = new CodexAdapter({
@@ -549,5 +1061,8 @@ else {
     clearInterval(timer);
     adapter?.cancel();
   });
-  app.on("will-quit", () => service?.close());
+  app.on("will-quit", () => {
+    service?.close();
+    memos?.close();
+  });
 }

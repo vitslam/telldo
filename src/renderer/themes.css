@@ -1732,3 +1732,159 @@ button.brand:focus-visible {
   font-size: 11px;
   color: var(--faint);
 }
+
+/* Quiet bridges between conversation and collected material. */
+.conversation-memo-link {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: min(100%, 420px);
+  text-align: left;
+  padding: 14px 16px;
+  margin-top: 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  color: var(--text);
+}
+.conversation-memo-link:hover {
+  border-color: var(--brand);
+  background: var(--panel);
+}
+.memo-link-icon {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--tint);
+  color: var(--brand);
+  border-radius: 9px;
+  flex-shrink: 0;
+}
+.conversation-memo-link strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 550;
+}
+.conversation-memo-link small {
+  display: block;
+  color: var(--secondary);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.conversation-memo-link > svg:last-child {
+  margin-left: auto;
+  color: var(--faint);
+  flex-shrink: 0;
+}
+.conversation-memo-sources {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.conversation-memo-sources button {
+  padding: 6px 9px;
+  gap: 6px;
+  border: 1px solid var(--border);
+  color: var(--secondary);
+  background: transparent;
+  font-size: 11px;
+}
+.composer-left-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.composer-attach {
+  padding: 5px;
+  color: var(--secondary);
+  border-radius: 6px;
+}
+.composer-attach:hover {
+  color: var(--text);
+  background: var(--subtle);
+}
+.sidebar nav .nav-item:nth-child(2) {
+  margin-bottom: 14px;
+}
+
+.memo-page-slot {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+.memo-page-slot[hidden] {
+  display: none;
+}
+
+.task-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.task-attachments button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  overflow: hidden;
+  border-radius: 8px;
+  color: var(--secondary);
+}
+.task-attachments img {
+  width: 100%;
+  max-width: 260px;
+  max-height: 180px;
+  object-fit: contain;
+  background: var(--subtle);
+}
+.task-attachments button > span {
+  max-width: 250px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 7px 10px;
+  font-size: 11px;
+}
+.task-attachments button > svg {
+  margin: 12px;
+}
+.task-attachment-section input[hidden] {
+  display: none;
+}
+.proposal-attachments {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.proposal-attachments > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 190px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--secondary);
+  font-size: 11px;
+}
+.proposal-attachments img {
+  width: 42px;
+  height: 35px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.proposal-attachments > span > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

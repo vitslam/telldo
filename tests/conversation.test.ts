@@ -65,7 +65,10 @@ describe("conversation response boundaries", () => {
       })),
     ];
     const result = conversationContext({ conversation: history });
-    expect(result.conversation).toHaveLength(12);
+    expect(result.conversation).toHaveLength(3);
+    expect(
+      result.conversation.reduce((n, message) => n + message.content.length, 0),
+    ).toBeLessThanOrEqual(6000);
     expect(
       result.conversation.every(
         (x) => x.role === "user" && x.content.length === 2000,

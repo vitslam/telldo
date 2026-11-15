@@ -6,6 +6,8 @@ owned Codex process group. Stdout is bounded JSONL; only proposal.raw is a
 business result. The desktop TaskService remains the authoritative validator.
 """
 import json
+import base64
+import binascii
 import os
 import re
 import selectors
@@ -19,7 +21,9 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-MAX_INPUT = 512 * 1024
+MAX_INPUT = 72 * 1024 * 1024
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_IMAGE_TOTAL = 50 * 1024 * 1024
 MAX_OUTPUT = 2 * 1024 * 1024
 TOOL_TYPE = re.compile(r"command_execution|file_change|tool|function_call|mcp|web_search|shell|patch|exec_command|computer", re.I)
 
@@ -290,7 +294,7 @@ class Runtime:
         if not path and os.path.isfile(requested) and os.access(requested, os.X_OK):
             path = requested
         caps = dict(available=False, version="", path=path or "", loggedIn=False, reason="Remote Codex is not installed / 远端未安装 Codex",
-                    schema=False, outputFile=False, json=False, readOnly=False, ignoreUserConfig=False, ignoreRules=False, ephemeral=False, skipGitCheck=False,
+                    schema=False, outputFile=False, json=False, readOnly=False, ignoreUserConfig=False, ignoreRules=False, ephemeral=False, skipGitCheck=False, imageInput=False,
                     isolation="Not verified / 未验证")
         if not path:
             return caps
@@ -303,7 +307,7 @@ class Runtime:
         help_text += error
         def has(flag):
             return re.search(r"(^|\s)" + re.escape(flag) + r"(?=\s|[=<,]|$)", help_text, re.M) is not None
-        caps.update(version=version.strip()[:200], schema=has("--output-schema"), outputFile=has("--output-last-message"),
+        caps.update(version=version.strip()[:200], imageInput=has("--image"), schema=has("--output-schema"), outputFile=has("--output-last-message"),
                     json=has("--json"), readOnly=has("--sandbox") and "read-only" in help_text,
                     ignoreUserConfig=has("--ignore-user-config"), ignoreRules=has("--ignore-rules"), ephemeral=has("--ephemeral"), skipGitCheck=has("--skip-git-repo-check"))
         code, login_help, error = self.command(path, ["login", "--help"], cwd)
@@ -339,6 +343,48 @@ class Runtime:
             args.extend(["--output-schema", str(schema_path)])
         if caps["outputFile"]:
             args.extend(["--output-last-message", str(final_path)])
+        images = self.request.get("images", [])
+        if not isinstance(images, list) or len(images) > 8:
+            raise RunnerError("Attach up to 8 images / 每条消息最多发送 8 张图片", "invalid_request")
+        if images and not caps.get("imageInput"):
+            raise RunnerError("Remote Codex does not support image input / 远端 Codex 不支持图片输入", "unsupported_input")
+        total = 0
+        ids = set()
+        for index, image in enumerate(images):
+            self.check()
+            if not isinstance(image, dict) or not isinstance(image.get("id"), str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", image["id"]) or image["id"] in ids:
+                raise RunnerError("Invalid image attachment", "invalid_request")
+            ids.add(image["id"])
+            encoded = image.get("base64")
+            if not isinstance(encoded, str) or len(encoded) > ((MAX_IMAGE_BYTES + 2) // 3) * 4:
+                raise RunnerError("Image exceeds 20 MB / 图片不能超过 20 MB", "invalid_request")
+            try:
+                data = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError):
+                raise RunnerError("Invalid image bytes", "invalid_request")
+            if base64.b64encode(data).decode("ascii") != encoded:
+                raise RunnerError("Invalid image encoding", "invalid_request")
+            total += len(data)
+            if not data or len(data) > MAX_IMAGE_BYTES or total > MAX_IMAGE_TOTAL:
+                raise RunnerError("Image inputs exceed 50 MB / 图片总大小不能超过 50 MB", "invalid_request")
+            extension, mime = None, None
+            if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                extension, mime = "png", "image/png"
+            elif data.startswith(b"\xff\xd8\xff"):
+                extension, mime = "jpg", "image/jpeg"
+            elif data[:6] in (b"GIF87a", b"GIF89a"):
+                extension, mime = "gif", "image/gif"
+            elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+                extension, mime = "webp", "image/webp"
+            if not extension or image.get("mime") != mime:
+                raise RunnerError("Unsupported or mismatched image type / 图片格式无效", "invalid_request")
+            path = Path(cwd) / ("image-%d.%s" % (index, extension))
+            path.write_bytes(data)
+            path.chmod(0o600)
+            args.extend(["--image", str(path)])
+            self.check()
+        if images:
+            args.append("--")
         args.append("-")
         last_message = [None]
         progress = PublicProgress()

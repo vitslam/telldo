@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { DateTime, IANAZone } from "luxon";
-import type { ProposalInput, TaskPatch } from "./types";
+import type { AIResponse, ProposalInput, TaskPatch } from "./types";
 import { splitRecurringTask } from "./recurrence";
+import { contextQuerySchema } from "./context-query";
 
 export const MAX_ACTIONS = 50;
 const day = z
@@ -188,7 +189,7 @@ export const proposalSchema = z
     actions: z.array(actionSchema).min(1).max(MAX_ACTIONS),
   })
   .strict();
-export function parseProposal(value: unknown): ProposalInput {
+function normalizeWireActions(value: unknown): unknown {
   // Structured-output transport uses a key/value array so every schema property
   // can be required without confusing an omitted field with an explicit null.
   if (
@@ -227,6 +228,11 @@ export function parseProposal(value: unknown): ProposalInput {
       }),
     };
   }
+  return value;
+}
+
+export function parseProposal(value: unknown): ProposalInput {
+  value = normalizeWireActions(value);
   const result = proposalSchema.parse(value);
   const targets = result.actions.flatMap((a) =>
     a.type === "create" ||
@@ -298,16 +304,102 @@ export function parseProposal(value: unknown): ProposalInput {
 }
 
 // An answer is validated separately; it can never enter the mutation pipeline.
-export function parseAIResponse(value: unknown): ProposalInput {
+const memoActionSchema = z
+  .object({
+    type: z.literal("save_memo"),
+    temp_id: z.string().min(1).max(200),
+    patch: z
+      .object({
+        title: z.string().trim().min(1).max(200).optional(),
+        text: z
+          .string()
+          .min(1)
+          .max(20000)
+          .refine((text) => text.trim().length > 0, "Memo text is empty"),
+        summary: z.string().trim().min(1).max(500).optional(),
+        attachment_ids: z.array(z.string().min(1).max(200)).max(12).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const contextRequestSchema = z
+  .object({
+    type: z.literal("request_context"),
+    patch: contextQuerySchema,
+  })
+  .strict();
+
+export function parseAIResponse(value: unknown): AIResponse {
+  value = normalizeWireActions(value);
   if (
-    value &&
-    typeof value === "object" &&
-    Array.isArray((value as any).actions) &&
-    (value as any).actions.length === 0
-  ) {
-    return proposalSchema
-      .extend({ actions: z.array(z.never()).length(0) })
-      .parse(value);
+    !value ||
+    typeof value !== "object" ||
+    !Array.isArray((value as any).actions)
+  )
+    return parseProposal(value);
+  const raw = value as any;
+  if (raw.actions.some((action: any) => action?.type === "request_context")) {
+    const result = proposalSchema
+      .extend({ actions: z.array(contextRequestSchema).length(1) })
+      .parse(raw);
+    return {
+      ...result,
+      risk: "low",
+      actions: [],
+      query: result.actions[0].patch,
+    };
   }
-  return parseProposal(value);
+  const memoActions = raw.actions.filter((a: any) => a?.type === "save_memo");
+  if (memoActions.length > 1) throw Error("One record per input");
+  const memoAction = memoActions.length
+    ? memoActionSchema.parse(memoActions[0])
+    : undefined;
+  const assetAssignments: { actionIndex: number; attachmentIds: string[] }[] =
+    [];
+  const tasks = raw.actions
+    .filter((a: any) => a?.type !== "save_memo")
+    .map((a: any, index: number) => {
+      if (
+        !a ||
+        typeof a !== "object" ||
+        !a.patch ||
+        typeof a.patch !== "object" ||
+        Array.isArray(a.patch)
+      )
+        return a;
+      const { attachment_ids, ...patch } = a.patch;
+      if (attachment_ids !== undefined) {
+        const ids = z
+          .array(z.string().min(1).max(200))
+          .max(12)
+          .parse(attachment_ids);
+        if (a.type === "create_list" || a.type === "delete")
+          throw Error("This action cannot attach files");
+        assetAssignments.push({
+          actionIndex: index,
+          attachmentIds: [...new Set(ids)],
+        });
+      }
+      return { ...a, patch };
+    });
+  const result = tasks.length
+    ? parseProposal({ ...raw, actions: tasks })
+    : proposalSchema
+        .extend({ actions: z.array(z.never()).length(0) })
+        .parse({ ...raw, actions: [] });
+  const memo = memoAction
+    ? {
+        tempId: memoAction.temp_id,
+        title: memoAction.patch.title,
+        text: memoAction.patch.text,
+        summary: memoAction.patch.summary,
+        attachmentIds: memoAction.patch.attachment_ids,
+      }
+    : undefined;
+  return {
+    ...result,
+    ...(memo ? { memo } : {}),
+    ...(assetAssignments.length ? { assetAssignments } : {}),
+  };
 }

@@ -1,5 +1,11 @@
+import MemoPage from "./MemoPage";
+import type { Memo, MemoAttachment } from "../shared/memo";
 import RecurringProposalDetails from "./RecurringProposalDetails";
-import ChatPage, { type ConversationMessage } from "./ChatPage";
+import ChatPage, {
+  type ConversationMessage,
+  type DraftAttachment,
+  type ContentReference,
+} from "./ChatPage";
 import type { AIProgress } from "../shared/ai-progress";
 import type { ChatReply } from "../shared/conversation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -28,6 +34,8 @@ import {
   Trash2,
   LoaderCircle,
   SquarePen,
+  NotebookPen,
+  Paperclip,
   FolderPlus,
 } from "lucide-react";
 import type {
@@ -99,6 +107,11 @@ const zh: Record<string, string> = {
   "Display mode": "显示模式",
   "Preview instantly. Save to keep your choice.": "选择即可预览，保存后生效。",
   Conversation: "AI 对话",
+  Memos: "时间线",
+  Timeline: "时间线",
+  Attachments: "附件",
+  "Ask about this todo": "引用这条待办提问",
+  "Add attachments in conversation": "在对话中补充附件",
   Today: "今天",
   Planned: "计划",
   Anytime: "随时",
@@ -326,6 +339,35 @@ export default function App() {
       message: string;
       run: () => Promise<unknown>;
     } | null>(null);
+  const [references, setReferences] = useState<ContentReference[]>([]);
+  const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>(
+    [],
+  );
+  const ownedUrls = useRef(new Set<string>());
+  const retryCapture = useRef<{ id: string; fingerprint: string } | null>(null);
+  const lastListId = useRef<string | undefined>(undefined);
+  useEffect(
+    () => () => {
+      for (const url of ownedUrls.current) URL.revokeObjectURL(url);
+    },
+    [],
+  );
+  const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
+  const [memoCount, setMemoCount] = useState(0);
+  const [memoTitles, setMemoTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const refresh = () =>
+      void api<Memo[]>("memoList")
+        .then((items) => {
+          setMemoCount(items.length);
+          setMemoTitles(Object.fromEntries(items.map((m) => [m.id, m.title])));
+        })
+        .catch(() => {});
+    refresh();
+    return window.telldo.onEvent((event) => {
+      if (event.type === "memo-changed") refresh();
+    });
+  }, []);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [cancelling, setCancelling] = useState(false);
   const activeRequest = useRef<string | null>(null);
@@ -344,8 +386,15 @@ export default function App() {
       if (document.querySelector(".overlay")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        searchInput.current?.focus();
-        searchInput.current?.select();
+        const memoSearch =
+          document.querySelector<HTMLInputElement>(".memo-search-input");
+        if (memoSearch?.getClientRects().length) {
+          memoSearch.focus();
+          memoSearch.select();
+        } else {
+          searchInput.current?.focus();
+          searchInput.current?.select();
+        }
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
         event.preventDefault();
@@ -555,8 +604,111 @@ export default function App() {
       cancelledRequest.current = null;
     }
   }
+  function addDraftFiles(files: File[]) {
+    const next = files.map((file) => {
+      const image = [
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+      ].includes(file.type);
+      const previewUrl = image ? URL.createObjectURL(file) : undefined;
+      if (previewUrl) ownedUrls.current.add(previewUrl);
+      return {
+        id: crypto.randomUUID(),
+        name: file.name,
+        bytes: file.size,
+        kind: image ? ("image" as const) : ("file" as const),
+        previewUrl,
+        file,
+      };
+    });
+    setDraftAttachments((old) => {
+      const combined = [...old, ...next];
+      if (
+        combined.length > 12 ||
+        combined.filter((f) => f.kind === "image").length > 8 ||
+        combined.some(
+          (f) =>
+            f.bytes > 50 * 1024 * 1024 ||
+            (f.kind === "image" && f.bytes > 20 * 1024 * 1024),
+        ) ||
+        combined.reduce((n, f) => n + f.bytes, 0) > 50 * 1024 * 1024
+      ) {
+        setError(
+          isZh
+            ? "最多 12 个附件、8 张图片；单张图片 20 MB，总计 50 MB。"
+            : "Up to 12 files, 8 images; 20 MB per image and 50 MB total.",
+        );
+        for (const file of next)
+          if (file.previewUrl) {
+            URL.revokeObjectURL(file.previewUrl);
+            ownedUrls.current.delete(file.previewUrl);
+          }
+        return old;
+      }
+      return combined;
+    });
+  }
+  function askTaskReference(task: Task) {
+    setReferences(
+      (old) =>
+        [
+          ...old.filter((ref) => ref.kind !== "task" || ref.id !== task.id),
+          {
+            kind: "task",
+            id: task.id,
+            title: task.title,
+            attachmentCount: task.attachments?.length || 0,
+          },
+        ].slice(-4) as ContentReference[],
+    );
+    setSpeech((draft) =>
+      draft.trim()
+        ? draft
+        : isZh
+          ? "请帮我看看引用的这条待办。"
+          : "Review this referenced todo.",
+    );
+    openConversation();
+  }
+  function prepareTaskFiles(task: Task, files: File[]) {
+    setReferences(
+      (old) =>
+        [
+          ...old.filter((ref) => ref.kind !== "task" || ref.id !== task.id),
+          {
+            kind: "task",
+            id: task.id,
+            title: task.title,
+            attachmentCount: task.attachments?.length || 0,
+          },
+        ].slice(-4) as ContentReference[],
+    );
+    addDraftFiles(files);
+    setSpeech(
+      isZh
+        ? `请把这些附件补充到待办「${task.title}」中。`
+        : `Add these attachments to the todo “${task.title}”.`,
+    );
+    lastListId.current = task.list_id;
+    openConversation();
+  }
   async function ask(continuation?: Proposal) {
-    const request = continuation ? continuation.source_text : speech.trim();
+    const files = continuation ? [] : draftAttachments;
+    const sendingReferences = continuation ? [] : references;
+    const request = continuation
+      ? continuation.source_text
+      : speech.trim() ||
+        (files.length
+          ? isZh
+            ? "请结合这些附件内容帮我处理。"
+            : "Help me with the attached content."
+          : sendingReferences.length
+            ? isZh
+              ? "请帮我回顾引用的内容。"
+              : "Review the referenced content."
+            : "");
     if (!request || asking.current) return;
     asking.current = true;
     const requestId = crypto.randomUUID();
@@ -564,14 +716,18 @@ export default function App() {
     cancelledRequest.current = null;
     setBusy(true);
     setCancelling(false);
-    if (!continuation) setSpeech("");
-    const excludedTurns = new Set(
+    if (!continuation) {
+      setSpeech("");
+      setDraftAttachments([]);
+      setReferences([]);
+    }
+    const excluded = new Set(
       messages
         .filter((m) => m.error || m.state === "cancelled")
         .map((m) => m.turnId || m.id),
     );
     const history = messages
-      .filter((m) => !excludedTurns.has(m.turnId || m.id) && m.content)
+      .filter((m) => !excluded.has(m.turnId || m.id) && m.content)
       .slice(-12)
       .map((m) => ({
         role: m.role,
@@ -581,6 +737,31 @@ export default function App() {
             ? `\n[Proposal status: ${m.proposalId === continuation?.id ? "applied" : data?.proposals.find((p) => p.id === m.proposalId)?.status || "unknown"}]`
             : ""),
       }));
+    const historyCaptureIds = [
+      ...new Set(
+        messages
+          .filter((m) => m.role === "user" && m.captureId)
+          .map((m) => m.captureId!),
+      ),
+    ].slice(-2);
+    const recentReferences = [
+      ...messages
+        .filter((m) => m.role === "user")
+        .flatMap((m) => [
+          ...(m.references || []).map((ref) => ({
+            kind: ref.kind,
+            id: ref.id,
+          })),
+          ...(m.captureId ? [{ kind: "memo" as const, id: m.captureId }] : []),
+        ]),
+    ]
+      .filter(
+        (ref, index, array) =>
+          !array
+            .slice(index + 1)
+            .some((r) => r.kind === ref.kind && r.id === ref.id),
+      )
+      .slice(-4);
     setMessages((items) => [
       ...items,
       ...(!continuation
@@ -589,77 +770,150 @@ export default function App() {
               id: crypto.randomUUID(),
               turnId: requestId,
               role: "user" as const,
-              content: request,
+              content: speech.trim(),
+              references: sendingReferences,
+              attachments: files.map(({ id, name, kind, previewUrl }) => ({
+                id,
+                name,
+                kind,
+                previewUrl,
+              })),
             },
           ]
         : []),
       {
         id: requestId,
         turnId: requestId,
-        role: "assistant",
+        role: "assistant" as const,
         content: "",
-        state: "working",
+        state: "working" as const,
         startedAt: Date.now(),
         activities: [],
       },
     ]);
     try {
+      let captureId: string | undefined;
+      if (files.length) {
+        const fingerprint = request + "|" + files.map((f) => f.id).join("|");
+        if (retryCapture.current?.fingerprint === fingerprint)
+          captureId = retryCapture.current.id;
+        else {
+          if (retryCapture.current)
+            void api("inputDiscard", retryCapture.current.id).catch(() => {});
+          const attachments = await Promise.all(
+            files.map(async (f) => ({
+              name: f.name,
+              bytes: new Uint8Array(await f.file!.arrayBuffer()),
+            })),
+          );
+          const capture = await api<Memo>("inputStage", {
+            text: speech.trim(),
+            attachments,
+            idempotencyKey: `input:${requestId}`,
+          });
+          captureId = capture.id;
+          retryCapture.current = { id: capture.id, fingerprint };
+          setMessages((items) =>
+            items.map((m) =>
+              m.turnId === requestId && m.role === "user"
+                ? {
+                    ...m,
+                    captureId,
+                    attachments: capture.attachments.map((a) => ({
+                      id: a.id,
+                      name: a.name,
+                      kind: a.kind,
+                      previewUrl:
+                        a.kind === "image"
+                          ? `telldo-memo://attachment/${a.id}`
+                          : undefined,
+                    })),
+                  }
+                : m,
+            ),
+          );
+        }
+      }
       const reply = await api<ChatReply>(
         "ask",
         request,
-        lists[0]?.id,
+        lastListId.current,
         history,
         requestId,
         continuation?.id,
+        {
+          captureId,
+          references: continuation
+            ? undefined
+            : sendingReferences.map(({ kind, id }) => ({ kind, id })),
+          recentReferences,
+        },
       );
+      retryCapture.current = null;
       setMessages((items) =>
-        items.map((message) =>
-          message.id === requestId
+        items.map((m) =>
+          m.id === requestId
             ? {
-                ...message,
+                ...m,
                 content: reply.message,
                 proposalId: reply.proposalId,
-                activities: reply.activities || message.activities,
+                memoId: reply.memoId,
+                memoIds: reply.memoIds,
                 state: "completed",
+                activities: reply.activities || m.activities,
                 finishedAt: Date.now(),
               }
-            : message,
+            : m.turnId === requestId && m.role === "user"
+              ? {
+                  ...m,
+                  captureId: reply.captureId || captureId,
+                  ...(reply.attachments
+                    ? { attachments: reply.attachments }
+                    : {}),
+                }
+              : m,
         ),
       );
       void reload().catch((e) => setError(String(e)));
     } catch (e) {
       const cancelled = cancelledRequest.current === requestId;
-      const content = cancelled
-        ? continuation
-          ? isZh
-            ? "已停止继续处理，已经确认的更改会保留。"
-            : "Continuation stopped. Your approved changes are kept."
-          : isZh
-            ? "已停止本次回复。任务未作更改。"
-            : "Response stopped. Your tasks haven't changed."
+      const notice = cancelled
+        ? isZh
+          ? "已停止，输入内容仍然保留。"
+          : "Stopped. Your input is kept."
         : String(e)
             .replace(/^Error: /, "")
             .replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
       setMessages((items) =>
-        items.map((message) =>
-          message.id === requestId
+        items.map((m) =>
+          m.id === requestId
             ? {
-                ...message,
-                notice: content,
+                ...m,
+                notice,
                 error: !cancelled,
                 state: cancelled ? "cancelled" : "error",
                 finishedAt: Date.now(),
               }
-            : message,
+            : m,
         ),
       );
-      if (!cancelled) setSpeech((draft) => draft || request);
+      if (!continuation) {
+        setSpeech((draft) => draft || request);
+        setDraftAttachments((draft) => (draft.length ? draft : files));
+        setReferences((draft) => (draft.length ? draft : sendingReferences));
+      }
     } finally {
       activeRequest.current = null;
       asking.current = false;
       setBusy(false);
       setCancelling(false);
     }
+  }
+  function openMemo(id: string) {
+    setView("memos");
+    setSearch("");
+    setSelected(null);
+    setSelectedMemoId(id);
   }
   const dateLabel = (item: Task) => {
     const date =
@@ -703,6 +957,7 @@ export default function App() {
         <LoaderCircle className="spin" />
       </div>
     );
+  const isMemoView = view === "memos" && !search;
   const isConversation = view === "assistant" && !search;
   return (
     <div
@@ -721,6 +976,7 @@ export default function App() {
         <nav>
           {[
             ["assistant", "Conversation", Sparkles],
+            ["memos", "Timeline", NotebookPen],
             ["today", "Today", Sun],
             ["planned", "Planned", CalendarDays],
             ["anytime", "Anytime", Layers],
@@ -741,7 +997,8 @@ export default function App() {
                 {id === "assistant" && busy && (
                   <LoaderCircle size={13} className="spin nav-working" />
                 )}
-                {id !== "planned" && id !== "assistant" && (
+
+                {id !== "planned" && id !== "assistant" && id !== "memos" && (
                   <small>
                     {
                       allRows.filter(
@@ -771,6 +1028,7 @@ export default function App() {
               key={list.id}
               onClick={() => {
                 setView(list.id);
+                lastListId.current = list.id;
                 setSearch("");
               }}
             >
@@ -809,18 +1067,20 @@ export default function App() {
             {isConversation ? "Telldo" : isZh ? "我的空间" : "My workspace"}
             <span>/</span>
             <strong>
-              {isConversation
-                ? t("Conversation")
-                : search
-                  ? t("Search tasks, notes, tags…")
-                  : currentList?.name ||
-                    t(
-                      view === "today"
-                        ? "Today"
-                        : view === "planned"
-                          ? "Planned"
-                          : "Anytime",
-                    )}
+              {isMemoView
+                ? t("Timeline")
+                : isConversation
+                  ? t("Conversation")
+                  : search
+                    ? t("Search tasks, notes, tags…")
+                    : currentList?.name ||
+                      t(
+                        view === "today"
+                          ? "Today"
+                          : view === "planned"
+                            ? "Planned"
+                            : "Anytime",
+                      )}
             </strong>
           </div>
           {isConversation && (
@@ -830,6 +1090,10 @@ export default function App() {
               onClick={() => {
                 setMessages([]);
                 setSpeech("");
+                setDraftAttachments([]);
+                setReferences([]);
+                for (const url of ownedUrls.current) URL.revokeObjectURL(url);
+                ownedUrls.current.clear();
                 speechInput.current?.focus();
               }}
               title={
@@ -842,25 +1106,27 @@ export default function App() {
               <span>{isZh ? "新对话" : "New chat"}</span>
             </button>
           )}
-          <label className="search">
-            <Search size={17} />
-            <input
-              ref={searchInput}
-              aria-label={t("Search tasks, notes, tags…")}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t("Search tasks, notes, tags…")}
-            />
-            {search && (
-              <button
-                aria-label={isZh ? "清除搜索" : "Clear search"}
-                onClick={() => setSearch("")}
-              >
-                <X size={14} />
-              </button>
-            )}
-            {!search && <kbd>⌘ K</kbd>}
-          </label>
+          {!isMemoView && (
+            <label className="search">
+              <Search size={17} />
+              <input
+                ref={searchInput}
+                aria-label={t("Search tasks, notes, tags…")}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t("Search tasks, notes, tags…")}
+              />
+              {search && (
+                <button
+                  aria-label={isZh ? "清除搜索" : "Clear search"}
+                  onClick={() => setSearch("")}
+                >
+                  <X size={14} />
+                </button>
+              )}
+              {!search && <kbd>⌘ K</kbd>}
+            </label>
+          )}
         </header>
         <div className="conversation-page-slot" hidden={!isConversation}>
           {error && (
@@ -872,6 +1138,19 @@ export default function App() {
             </div>
           )}
           <ChatPage
+            openMemo={openMemo}
+            memoTitles={memoTitles}
+            references={references}
+            removeReference={(kind, id) =>
+              setReferences((items) =>
+                items.filter((ref) => ref.kind !== kind || ref.id !== id),
+              )
+            }
+            attachments={draftAttachments}
+            addFiles={addDraftFiles}
+            removeAttachment={(id) =>
+              setDraftAttachments((files) => files.filter((f) => f.id !== id))
+            }
             visible={isConversation}
             messages={messages}
             busy={busy}
@@ -889,7 +1168,69 @@ export default function App() {
             settings={() => setSettingsOpen(true)}
           />
         </div>
-        {!isConversation && (
+        <div className="memo-page-slot" hidden={!isMemoView}>
+          <MemoPage
+            completedTasks={[
+              ...tasks.filter((task) => task.status === "done"),
+              ...data.recurrences.flatMap((rule) => {
+                const master = tasks.find((t) => t.id === rule.task_id);
+                const done = data.occurrences
+                  .filter((o) => o.series_id === rule.id && o.status === "done")
+                  .sort((a, b) =>
+                    (b.completed_at || "").localeCompare(a.completed_at || ""),
+                  )[0];
+                return master && done
+                  ? [taskFromOccurrence(master, done, rule.tzid)]
+                  : [];
+              }),
+            ]}
+            allTasks={tasks}
+            lists={lists}
+            taskAttachments={Object.fromEntries(
+              tasks.map((t) => [t.id, t.attachments || []]),
+            )}
+            onOpenTask={(id) => {
+              const task = tasks.find((t) => t.id === id);
+              if (task) {
+                setView(task.list_id);
+                setShowDone(true);
+                setSelected(id);
+              }
+            }}
+            onCompose={openConversation}
+            visible={isMemoView}
+            isZh={isZh}
+            zone={zone}
+            selectedMemoId={selectedMemoId}
+            onSelectMemo={setSelectedMemoId}
+            onReviewProposal={setProposalId}
+            onAskMemo={(memo) => {
+              setReferences(
+                (old) =>
+                  [
+                    ...old.filter(
+                      (ref) => ref.kind !== "memo" || ref.id !== memo.id,
+                    ),
+                    {
+                      kind: "memo",
+                      id: memo.id,
+                      title: memo.title,
+                      attachmentCount: memo.attachments.length,
+                    },
+                  ].slice(-4) as ContentReference[],
+              );
+              setSpeech((draft) =>
+                draft.trim()
+                  ? draft
+                  : isZh
+                    ? "请帮我回顾引用的内容。"
+                    : "Review the referenced content.",
+              );
+              openConversation();
+            }}
+          />
+        </div>
+        {!isConversation && !isMemoView && (
           <div className="content">
             <div className="view-heading">
               <div className="eyebrow">
@@ -1010,6 +1351,8 @@ export default function App() {
                   }}
                   renderDetails={(item, dates, close) => (
                     <TaskDetail
+                      onAttach={prepareTaskFiles}
+                      onAsk={askTaskReference}
                       key={item.id + ":" + item.version}
                       task={item}
                       data={data}
@@ -1122,6 +1465,12 @@ export default function App() {
                                 {lists.find((l) => l.id === item.list_id)?.name}
                               </span>
                             )}
+                            {!!item.attachments?.length && (
+                              <span>
+                                <Paperclip size={11} />
+                                {item.attachments.length}
+                              </span>
+                            )}
                             {item.tags.map((tag) => (
                               <span className="tag" key={tag}>
                                 #{tag}
@@ -1177,27 +1526,32 @@ export default function App() {
           </div>
         )}
       </main>
-      {task && !isConversation && !(view === "planned" && !search) && (
-        <TaskDetail
-          key={task.id + ":" + task.version}
-          task={task}
-          data={data}
-          zone={zone}
-          t={t}
-          close={() => setSelected(null)}
-          act={act}
-          selectTask={setSelected}
-          requestDelete={() =>
-            setConfirm({
-              message: t("Delete this task and its subtasks?"),
-              run: async () => {
-                await api("deleteTask", task.id, task.version);
-                setSelected(null);
-              },
-            })
-          }
-        />
-      )}
+      {task &&
+        !isConversation &&
+        !isMemoView &&
+        !(view === "planned" && !search) && (
+          <TaskDetail
+            onAttach={prepareTaskFiles}
+            onAsk={askTaskReference}
+            key={task.id + ":" + task.version}
+            task={task}
+            data={data}
+            zone={zone}
+            t={t}
+            close={() => setSelected(null)}
+            act={act}
+            selectTask={setSelected}
+            requestDelete={() =>
+              setConfirm({
+                message: t("Delete this task and its subtasks?"),
+                run: async () => {
+                  await api("deleteTask", task.id, task.version);
+                  setSelected(null);
+                },
+              })
+            }
+          />
+        )}
       {toast && (
         <div className="toast">
           <Check size={16} />
@@ -1329,6 +1683,8 @@ function TaskDetail({
   requestDelete,
   selectTask,
   calendarDates,
+  onAttach,
+  onAsk,
 }: {
   task: Task;
   data: Snapshot;
@@ -1339,7 +1695,10 @@ function TaskDetail({
   requestDelete: () => void;
   selectTask: (id: string) => void;
   calendarDates?: ReactNode;
+  onAttach?: (task: Task, files: File[]) => void;
+  onAsk?: (task: Task) => void;
 }) {
+  const attachmentInput = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<TaskPatch>({ ...task }),
     [natural, setNatural] = useState(""),
     [sub, setSub] = useState(""),
@@ -1473,6 +1832,12 @@ function TaskDetail({
         </button>
       </div>
       <div className="detail-scroll">
+        {onAsk && (
+          <button className="text-button" onClick={() => onAsk(task)}>
+            <Sparkles size={14} />
+            {t("Ask about this todo")}
+          </button>
+        )}
         <textarea
           className="detail-title"
           aria-label={t("Title")}
@@ -1495,6 +1860,55 @@ function TaskDetail({
             rows={3}
           />
         </label>
+        <section className="detail-section task-attachment-section">
+          <h3>
+            <Paperclip size={15} />
+            {t("Attachments")}
+          </h3>
+          <div className="task-attachments">
+            {task.attachments?.map((file) => (
+              <button
+                key={file.id}
+                onClick={() =>
+                  void api("memoOpen", file.id).catch((e) =>
+                    act(async () => {
+                      throw e;
+                    }),
+                  )
+                }
+                title={file.name}
+              >
+                {file.kind === "image" ? (
+                  <img
+                    src={`telldo-memo://attachment/${file.id}`}
+                    alt={file.name}
+                  />
+                ) : (
+                  <Paperclip size={17} />
+                )}
+                <span>{file.name}</span>
+              </button>
+            ))}
+          </div>
+          <input
+            hidden
+            ref={attachmentInput}
+            type="file"
+            multiple
+            onChange={(event) => {
+              const files = Array.from(event.target.files || []);
+              if (files.length) onAttach?.(task, files);
+              event.target.value = "";
+            }}
+          />
+          <button
+            className="text-button"
+            onClick={() => attachmentInput.current?.click()}
+          >
+            <Plus size={14} />
+            {t("Add attachments in conversation")}
+          </button>
+        </section>
         <div className="form-grid">
           <label>
             {t("List")}
@@ -2277,6 +2691,17 @@ function ProposalDialog({
   aiBusy: boolean;
   isZh: boolean;
 }) {
+  const [proposalFiles, setProposalFiles] = useState<
+    Record<number, MemoAttachment[]>
+  >({});
+  useEffect(() => {
+    void api<Record<number, MemoAttachment[]>>(
+      "proposalAttachments",
+      proposal.id,
+    )
+      .then(setProposalFiles)
+      .catch(() => {});
+  }, [proposal.id]);
   const [working, setWorking] = useState(false);
   const [operationError, setOperationError] = useState("");
   const fields: Record<string, string> = {
@@ -2498,6 +2923,23 @@ function ProposalDialog({
                   </span>
                   <h3>{title}</h3>
                   {!!details.length && <dl>{details}</dl>}
+                  {!!proposalFiles[index]?.length && (
+                    <div className="proposal-attachments">
+                      {proposalFiles[index].map((file) => (
+                        <span key={file.id}>
+                          {file.kind === "image" ? (
+                            <img
+                              src={`telldo-memo://attachment/${file.id}`}
+                              alt=""
+                            />
+                          ) : (
+                            <Paperclip size={14} />
+                          )}
+                          <span>{file.name}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {action.type === "delete" &&
                     tasks.some(
                       (item) => item.parent_id === action.target_id,

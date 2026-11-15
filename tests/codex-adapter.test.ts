@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import {
@@ -53,6 +53,7 @@ function harness(
     options: Record<string, unknown>;
     input: string;
     killed: boolean;
+    imageBytes?: Buffer[];
   }> = [];
   const spawn: SpawnProcess = (file, args, spawnOptions) => {
     const child = new EventEmitter() as any;
@@ -60,6 +61,9 @@ function harness(
     child.stderr = new PassThrough();
     child.stdin = new PassThrough();
     const call = {
+      imageBytes: args.flatMap((arg, index) =>
+        arg === "--image" ? [readFileSync(args[index + 1])] : [],
+      ),
       file,
       args,
       options: spawnOptions,
@@ -339,5 +343,47 @@ describe("Codex adapter capability probing and process boundary", () => {
     adapter.cancel();
     await rejection;
     expect(calls.at(-1)!.killed).toBe(true);
+  });
+});
+
+describe("Codex image input boundary", () => {
+  it("attaches actual bytes using CLI image arguments and cleans their temp files", async () => {
+    const { adapter, calls } = await ready({
+      help: HELP + " --image FILE",
+      timeoutMs: 1000,
+    });
+    const bytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBx8AAAAASUVORK5CYII=",
+      "base64",
+    );
+    await adapter.run("Read the image", {}, () => {}, [
+      {
+        id: "asset-image",
+        name: "image.png",
+        mime: "image/png",
+        kind: "image",
+        bytes,
+      },
+    ]);
+    const call = calls.find((c) => c.args.includes("--image"))!;
+    expect(call.imageBytes?.[0]).toEqual(bytes);
+    expect(call.input).toContain('"status":"image"');
+    expect(call.input).not.toContain(bytes.toString("base64"));
+    expect(existsSync(call.args[call.args.indexOf("--image") + 1])).toBe(false);
+  });
+  it("refuses images when the probed CLI lacks image input instead of pretending to read them", async () => {
+    const { adapter } = await ready();
+    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    await expect(
+      adapter.run("Read", {}, () => {}, [
+        {
+          id: "asset-image",
+          name: "photo.png",
+          mime: "image/png",
+          kind: "image",
+          bytes,
+        },
+      ]),
+    ).rejects.toThrow(/does not support image/);
   });
 });

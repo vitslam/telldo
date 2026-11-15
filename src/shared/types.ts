@@ -1,3 +1,5 @@
+import type { ContextQuery } from "./context-query";
+import type { MemoAttachment } from "./memo";
 export type Priority = "none" | "low" | "medium" | "high";
 export type View = "today" | "planned" | "anytime" | string;
 export interface List {
@@ -14,6 +16,7 @@ export interface Tag {
   name: string;
 }
 export interface Task {
+  attachments?: MemoAttachment[];
   id: string;
   list_id: string;
   parent_id: string | null;
@@ -140,6 +143,21 @@ export interface ProposalInput {
   idempotency_key: string;
   risk: "low" | "high";
   actions: ProposalAction[];
+}
+/** A capture response never enters the task mutation/confirmation pipeline. */
+export interface MemoCapture {
+  tempId: string;
+  title?: string;
+  text: string;
+  summary?: string;
+  listId?: string;
+  attachmentIds?: string[];
+}
+export interface AIResponse extends ProposalInput {
+  /** A host-side bounded read request; never a mutation proposal. */
+  query?: ContextQuery;
+  memo?: MemoCapture;
+  assetAssignments?: { actionIndex: number; attachmentIds: string[] }[];
 }
 export interface Proposal extends ProposalInput {
   id: string;

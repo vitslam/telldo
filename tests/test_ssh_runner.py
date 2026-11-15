@@ -3,6 +3,7 @@
 Fake executable only: no real login, credentials, provider calls or database.
 """
 import json
+import base64
 import os
 from pathlib import Path
 import signal
@@ -16,20 +17,21 @@ import unittest
 RUNNER = Path(__file__).resolve().parents[1] / "resources" / "ssh-codex-runner.py"
 PROPOSAL = {"version": 1, "summary": "Create a task", "idempotency_key": "ssh-test", "risk": "low", "actions": [{"type": "create", "temp_id": "new", "patch": {"title": "Tomorrow task", "list_id": "work"}}]}
 FAKE = r'''
-import json, os, pathlib, subprocess, sys, time
+import base64, json, os, pathlib, subprocess, sys, time
 args=sys.argv[1:]
 behavior=os.environ.get('FAKE_BEHAVIOR','success')
 if args==['--version']:
  print('codex-cli fake-1');sys.exit(0)
 if args==['exec','--help']:
- flags=['--json','--sandbox read-only','--ignore-user-config','--ignore-rules','--ephemeral','--skip-git-repo-check']
+ flags=['--image FILE'] if os.environ.get('FAKE_NO_IMAGE')!='yes' else []
+ flags+=['--json','--sandbox read-only','--ignore-user-config','--ignore-rules','--ephemeral','--skip-git-repo-check']
  if os.environ.get('FAKE_FALLBACK')!='yes':flags+=['--output-schema FILE','--output-last-message FILE']
  print('\n'.join(flags));sys.exit(0)
 if args==['login','--help']:
  print('Commands: status');sys.exit(0)
 if args==['login','status']:
  print('Not logged in' if behavior=='auth' else 'Logged in');sys.exit(1 if behavior=='auth' else 0)
-trace={'argv':args,'cwd':os.getcwd(),'files':sorted(os.listdir('.')),'proxy':os.environ.get('https_proxy')}
+trace={'argv':args,'cwd':os.getcwd(),'files':sorted(os.listdir('.')),'proxy':os.environ.get('https_proxy'),'images':[{'path':args[i+1],'base64':base64.b64encode(pathlib.Path(args[i+1]).read_bytes()).decode('ascii')} for i,arg in enumerate(args) if arg=='--image']}
 pathlib.Path(os.environ['FAKE_TRACE']).write_text(json.dumps(trace))
 if behavior=='hang':
  code="import time,pathlib;time.sleep(1.2);pathlib.Path("+repr(os.environ['FAKE_MARKER'])+").write_text('orphan')"
@@ -98,14 +100,15 @@ class SSHRunnerTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:running.process.kill();running.process.wait()
         self.temp.cleanup()
 
-    def start(self, behavior="success", mode="run", fallback=False, timeout=3000, prompt=None, codex_path=None):
+    def start(self, behavior="success", mode="run", fallback=False, timeout=3000, prompt=None, codex_path=None, images=None, no_image=False):
         env = dict(os.environ, PATH=str(self.root), FAKE_BEHAVIOR=behavior, FAKE_FALLBACK="yes" if fallback else "no",
-                   FAKE_TRACE=str(self.trace), FAKE_MARKER=str(self.marker), FAKE_PROPOSAL=json.dumps(PROPOSAL))
+                   FAKE_NO_IMAGE="yes" if no_image else "no", FAKE_TRACE=str(self.trace), FAKE_MARKER=str(self.marker), FAKE_PROPOSAL=json.dumps(PROPOSAL))
         process = subprocess.Popen([sys.executable, "-I", str(RUNNER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         running = Running(process)
         self.running.append(running)
         request = dict(version=1, mode=mode, codexPath=str(self.fake) if codex_path is None else codex_path, proxyUrl="http://192.0.2.10:3128", timeoutMs=timeout,
                        prompt=prompt or "Create a task. Do not use tools. $(touch NEVER) `touch NEVER2`", schema=json.dumps({"type": "object"}))
+        if images is not None: request["images"] = images
         process.stdin.write(json.dumps(request) + "\n")
         process.stdin.flush()
         return running
@@ -159,6 +162,32 @@ class SSHRunnerTests(unittest.TestCase):
         self.assertNotIn("$(touch", " ".join(trace["argv"]))
         self.assertEqual(trace["proxy"], "http://192.0.2.10:3128")
         self.assertFalse(Path(trace["cwd"]).exists(), "temporary working directory was not removed")
+
+    def image(self):
+        return dict(id="asset-image",mime="image/png",base64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBx8AAAAASUVORK5CYII=")
+
+    def test_image_bytes_reach_codex_and_owned_files_are_removed(self):
+        image = self.image()
+        code, frames = self.start(images=[image]).finish()
+        self.assertEqual(code, 0)
+        trace = json.loads(self.trace.read_text())
+        self.assertEqual(trace["images"][0]["base64"], image["base64"])
+        self.assertFalse(Path(trace["images"][0]["path"]).exists())
+        self.assertEqual(trace["argv"][-2:], ["--", "-"])
+        self.assertEqual(trace["files"], [])
+
+    def test_invalid_images_and_unsupported_cli_do_not_run_codex(self):
+        variants = [dict(self.image(), id="../escape"),dict(self.image(), mime="image/jpeg"),dict(self.image(), base64="not-base64"),dict(self.image(), base64=base64.b64encode(b"<svg>bad</svg>").decode())]
+        for image in variants:
+            with self.subTest(image=image):
+                code, frames = self.start(images=[image]).finish()
+                self.assertNotEqual(code, 0)
+                self.assertFalse(self.trace.exists())
+                self.assertFalse(any(frame["type"] == "proposal" for frame in frames))
+        code, frames = self.start(images=[self.image()],no_image=True).finish()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(frames[-1]["code"], "unsupported_input")
+        self.assertFalse(self.trace.exists())
 
     def test_schema_and_output_file_fallback_uses_final_agent_message(self):
         code, frames = self.start(fallback=True).finish()

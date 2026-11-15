@@ -38,6 +38,9 @@ class SQLiteDatabase {
       allowExtension: false,
     });
   }
+  function(name: string, handler: (...values: any[]) => any): void {
+    this.connection.function(name, { deterministic: true }, handler);
+  }
   exec(sql: string): void {
     this.connection.exec(sql);
   }

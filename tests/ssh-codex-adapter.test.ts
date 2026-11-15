@@ -21,6 +21,7 @@ const settings: SshCodexSettings = {
 };
 const caps = {
   available: true,
+  imageInput: true,
   version: "codex-cli 0.162.1",
   path: settings.codexPath,
   loggedIn: true,
@@ -369,4 +370,32 @@ describe("SSH transport boundary", () => {
       expect(calls).toHaveLength(0);
     },
   );
+});
+
+describe("SSH actual image input", () => {
+  it("sends bounded image bytes outside the prompt, preserving the attachment identifier", async () => {
+    const { adapter, calls } = harness();
+    await adapter.probe();
+    const bytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aBx8AAAAASUVORK5CYII=",
+      "base64",
+    );
+    await adapter.run("Read image", {}, () => {}, [
+      {
+        id: "asset-image",
+        name: "photo.png",
+        mime: "image/png",
+        kind: "image",
+        bytes,
+      },
+    ]);
+    const request = calls.find((call) => call.request?.mode === "run")!.request;
+    expect(Buffer.from(request.images[0].base64, "base64")).toEqual(bytes);
+    expect(request.images[0]).toMatchObject({
+      id: "asset-image",
+      mime: "image/png",
+    });
+    expect(request.prompt).toContain('"status":"image"');
+    expect(request.prompt).not.toContain(bytes.toString("base64"));
+  });
 });

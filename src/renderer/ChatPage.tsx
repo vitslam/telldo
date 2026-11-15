@@ -13,9 +13,13 @@ import {
   Check,
   ChevronRight,
   Circle,
+  FileText,
+  Image as ImageIcon,
   ListChecks,
   LoaderCircle,
   Plus,
+  Paperclip,
+  NotebookPen,
   Sparkles,
   Square,
   X,
@@ -24,13 +28,142 @@ import type { ChatMessage } from "../shared/conversation";
 import type { AIActivity } from "../shared/ai-progress";
 import type { Proposal } from "../shared/types";
 
+export interface DraftAttachment {
+  id: string;
+  name: string;
+  bytes: number;
+  kind: "image" | "file";
+  previewUrl?: string;
+  file?: globalThis.File;
+}
+export interface ConversationAttachment {
+  id: string;
+  name: string;
+  bytes?: number;
+  kind: "image" | "file";
+  previewUrl?: string;
+}
+/** The ID binds the source; the title is display text only. */
+export interface ContentReference {
+  kind: "memo" | "task";
+  id: string;
+  title: string;
+  attachmentCount?: number;
+}
 export interface ConversationMessage extends ChatMessage {
+  attachments?: ConversationAttachment[];
+  references?: ContentReference[];
   turnId?: string;
   notice?: string;
   activities?: AIActivity[];
   state?: "working" | "completed" | "cancelled" | "error";
   startedAt?: number;
   finishedAt?: number;
+}
+
+function ReferenceChips({
+  references,
+  isZh,
+  openMemo,
+  removeReference,
+  draft = false,
+}: {
+  references: ContentReference[];
+  isZh: boolean;
+  openMemo: (id: string) => void;
+  removeReference?: (kind: ContentReference["kind"], id: string) => void;
+  draft?: boolean;
+}) {
+  const text = (zh: string, en: string) => (isZh ? zh : en);
+  return (
+    <div className={draft ? "draft-references" : "conversation-references"}>
+      {draft && (
+        <span className="draft-references-label">
+          {text("引用记录", "Referencing")}
+        </span>
+      )}
+      <div
+        className="content-reference-list"
+        role="list"
+        aria-label={text("引用的内容", "Referenced content")}
+      >
+        {references.map((reference) => {
+          const title = reference.title || text("这条记录", "This record");
+          const label =
+            reference.kind === "task"
+              ? text("待办", "Task")
+              : text("记录", "Record");
+          const contents = (
+            <>
+              {reference.kind === "task" ? (
+                <ListChecks size={14} />
+              ) : (
+                <NotebookPen size={14} />
+              )}
+              <span className="content-reference-title" title={title}>
+                {title}
+              </span>
+              {!!reference.attachmentCount && (
+                <span
+                  className="content-reference-count"
+                  title={text(
+                    `${reference.attachmentCount} 个附件`,
+                    `${reference.attachmentCount} attachments`,
+                  )}
+                >
+                  <Paperclip size={10} />
+                  {reference.attachmentCount}
+                </span>
+              )}
+            </>
+          );
+          return (
+            <div
+              key={`${reference.kind}:${reference.id}`}
+              className="content-reference"
+              role="listitem"
+              data-reference-id={reference.id}
+            >
+              {reference.kind === "memo" ? (
+                <button
+                  type="button"
+                  className="content-reference-main"
+                  onClick={() => openMemo(reference.id)}
+                  aria-label={text(
+                    `查看引用${label}：${title}`,
+                    `Open referenced ${label.toLowerCase()}: ${title}`,
+                  )}
+                >
+                  {contents}
+                </button>
+              ) : (
+                <span
+                  className="content-reference-main"
+                  aria-label={`${label}: ${title}`}
+                >
+                  {contents}
+                </span>
+              )}
+              {removeReference && (
+                <button
+                  type="button"
+                  className="content-reference-remove"
+                  onClick={() => removeReference(reference.kind, reference.id)}
+                  aria-label={text(
+                    `移除引用 ${title}`,
+                    `Remove reference ${title}`,
+                  )}
+                  title={text("移除引用", "Remove reference")}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // A deliberately small, text-only renderer. Model output never becomes HTML.
@@ -161,6 +294,13 @@ export default function ChatPage({
   send,
   cancel,
   settings,
+  openMemo,
+  memoTitles,
+  attachments,
+  addFiles,
+  removeAttachment,
+  references,
+  removeReference,
 }: {
   visible: boolean;
   messages: ConversationMessage[];
@@ -177,13 +317,62 @@ export default function ChatPage({
   send: () => void;
   cancel: () => void;
   settings: () => void;
+  openMemo: (id: string) => void;
+  memoTitles: Record<string, string>;
+  attachments: DraftAttachment[];
+  addFiles: (files: globalThis.File[]) => void;
+  removeAttachment: (id: string) => void;
+  references: ContentReference[];
+  removeReference: (kind: ContentReference["kind"], id: string) => void;
 }) {
   const scroll = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const [preview, setPreview] = useState<ConversationAttachment | null>(null);
   const stickToBottom = useRef(true);
   const previousUser = useRef("");
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const text = (zh: string, en: string) => (isZh ? zh : en);
   const empty = messages.length === 0;
+  const hasDraft =
+    !!speech.trim() || attachments.length > 0 || references.length > 0;
+  useEffect(() => {
+    if (!visible) {
+      setDragging(false);
+      dragDepth.current = 0;
+      setPreview(null);
+    }
+  }, [visible]);
+  useEffect(() => {
+    if (!preview) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setPreview(null);
+      }
+    };
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("keydown", close);
+      previous?.isConnected && previous.focus();
+    };
+  }, [preview]);
+  function selectFiles(files: globalThis.File[]) {
+    if (!files.length) return;
+    addFiles(files);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+  function displaySize(bytes?: number) {
+    if (bytes === undefined) return "";
+    return bytes < 1024
+      ? `${bytes} B`
+      : bytes < 1024 * 1024
+        ? `${Math.round(bytes / 1024)} KB`
+        : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
   const unseenProposals = proposals.filter(
     (p) =>
       p.status === "pending" && !messages.some((m) => m.proposalId === p.id),
@@ -217,6 +406,7 @@ export default function ChatPage({
       );
     });
     observer.observe(body);
+    observer.observe(element);
     return () => observer.disconnect();
   }, [empty, visible]);
   function latest() {
@@ -309,8 +499,8 @@ export default function ChatPage({
               <h1>{text("今天，从哪里开始？", "Where shall we start?")}</h1>
               <p>
                 {text(
-                  "问问待办，或一起安排接下来的事。",
-                  "Catch up on your tasks. Make room for what's next.",
+                  "写下想法，或安排接下来的事。",
+                  "Share a thought, or make a plan.",
                 )}
               </p>
             </div>
@@ -345,10 +535,88 @@ export default function ChatPage({
                           {message.content}
                         </div>
                       ))}
+                    {!!message.references?.length && (
+                      <ReferenceChips
+                        references={message.references}
+                        isZh={isZh}
+                        openMemo={openMemo}
+                      />
+                    )}
+                    {!!message.attachments?.length && (
+                      <div
+                        className="conversation-attachments"
+                        aria-label={text(
+                          "这条消息的附件",
+                          "Message attachments",
+                        )}
+                      >
+                        {message.attachments.map((file) =>
+                          file.kind === "image" && file.previewUrl ? (
+                            <button
+                              className="conversation-attachment-image"
+                              key={file.id}
+                              onClick={() => setPreview(file)}
+                              aria-label={text(
+                                `预览 ${file.name}`,
+                                `Preview ${file.name}`,
+                              )}
+                            >
+                              <img src={file.previewUrl} alt={file.name} />
+                              <span>{file.name}</span>
+                            </button>
+                          ) : (
+                            <div
+                              className="conversation-attachment-file"
+                              key={file.id}
+                            >
+                              <FileText size={18} />
+                              <span>
+                                <strong>{file.name}</strong>
+                                <small>{displaySize(file.bytes)}</small>
+                              </span>
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    )}
                     {message.state === "working" && !message.content && (
                       <div className="reply-waiting" role="status">
                         {text("正在为你整理…", "Putting it together…")}
                         <span aria-hidden="true"> ···</span>
+                      </div>
+                    )}
+                    {message.memoId && (
+                      <button
+                        className="conversation-memo-link"
+                        onClick={() => openMemo(message.memoId!)}
+                      >
+                        <span className="memo-link-icon">
+                          <NotebookPen size={18} />
+                        </span>
+                        <span>
+                          <strong>
+                            {text("已留下这份内容", "Saved for later")}
+                          </strong>
+                          <small>
+                            {text(
+                              "查看原文与附件",
+                              "Open text and attachments",
+                            )}
+                          </small>
+                        </span>
+                        <ArrowUpRight size={16} />
+                      </button>
+                    )}
+                    {!!message.memoIds?.length && (
+                      <div className="conversation-memo-sources">
+                        {message.memoIds.map((id, i) => (
+                          <button key={id} onClick={() => openMemo(id)}>
+                            <NotebookPen size={12} />
+                            {memoTitles[id] ||
+                              text(`资料 ${i + 1}`, `Record ${i + 1}`)}
+                            <ArrowUpRight size={12} />
+                          </button>
+                        ))}
                       </div>
                     )}
                     {message.proposalId && (
@@ -414,7 +682,103 @@ export default function ChatPage({
             {text("回到最新", "Jump to latest")}
           </button>
         )}
-        <div className="conversation-composer" id="ai-composer">
+        <div
+          className={`conversation-composer ${dragging ? "is-dragging" : ""} ${attachments.length ? "has-attachments" : ""}`}
+          id="ai-composer"
+          onDragEnter={(event) => {
+            if (event.dataTransfer.types.includes("Files")) {
+              event.preventDefault();
+              dragDepth.current++;
+              setDragging(true);
+            }
+          }}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes("Files")) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+            }
+          }}
+          onDragLeave={(event) => {
+            if (
+              event.dataTransfer.types.includes("Files") &&
+              --dragDepth.current <= 0
+            ) {
+              dragDepth.current = 0;
+              setDragging(false);
+            }
+          }}
+          onDrop={(event) => {
+            if (event.dataTransfer.files.length) {
+              event.preventDefault();
+              dragDepth.current = 0;
+              setDragging(false);
+              selectFiles(Array.from(event.dataTransfer.files));
+            }
+          }}
+        >
+          <input
+            ref={fileInput}
+            className="conversation-file-input"
+            type="file"
+            multiple
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={(event) => {
+              selectFiles(Array.from(event.target.files || []));
+              event.target.value = "";
+            }}
+          />
+          {!!references.length && (
+            <ReferenceChips
+              references={references}
+              isZh={isZh}
+              openMemo={openMemo}
+              removeReference={removeReference}
+              draft
+            />
+          )}
+          {!!attachments.length && (
+            <div
+              className="draft-attachments"
+              aria-label={text("待发送附件", "Attachments ready to send")}
+            >
+              {attachments.map((file) => (
+                <div
+                  key={file.id}
+                  className={`draft-attachment ${file.kind === "image" && file.previewUrl ? "is-image" : "is-file"}`}
+                >
+                  {file.kind === "image" && file.previewUrl ? (
+                    <button
+                      className="draft-attachment-preview"
+                      onClick={() => setPreview(file)}
+                      title={text("预览图片", "Preview image")}
+                    >
+                      <img src={file.previewUrl} alt={file.name} />
+                    </button>
+                  ) : (
+                    <div className="draft-attachment-symbol">
+                      <FileText size={22} strokeWidth={1.5} />
+                    </div>
+                  )}
+                  <div className="draft-attachment-label">
+                    <strong title={file.name}>{file.name}</strong>
+                    <small>{displaySize(file.bytes)}</small>
+                  </div>
+                  <button
+                    className="draft-attachment-remove"
+                    onClick={() => removeAttachment(file.id)}
+                    aria-label={text(
+                      `移除 ${file.name}`,
+                      `Remove ${file.name}`,
+                    )}
+                    title={text("移除附件", "Remove attachment")}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={speech}
@@ -422,9 +786,27 @@ export default function ChatPage({
             maxLength={4000}
             aria-label={text("告诉 Telldo", "Tell Telldo")}
             placeholder={text(
-              "问问待办，或说说你的想法…",
-              "Ask about your tasks, or share an idea…",
+              references.length
+                ? "围绕引用的内容，继续问问…"
+                : attachments.length
+                  ? "补充一点说明，和附件一起发送…"
+                  : "问问待办，或说说你的想法…",
+              references.length
+                ? "Ask about the referenced content…"
+                : attachments.length
+                  ? "Add a little context for these attachments…"
+                  : "Ask about your tasks, or share an idea…",
             )}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData.files);
+              if (files.length) {
+                event.preventDefault();
+                selectFiles(files);
+                const pastedText = event.clipboardData.getData("text/plain");
+                if (pastedText)
+                  setSpeech(speech ? `${speech}\n${pastedText}` : pastedText);
+              }
+            }}
             onChange={(e) => setSpeech(e.target.value)}
             onKeyDown={(e) => {
               if (
@@ -433,26 +815,39 @@ export default function ChatPage({
                 !e.nativeEvent.isComposing
               ) {
                 e.preventDefault();
-                if (available && !busy && speech.trim()) send();
+                if (available && !busy && hasDraft) send();
               }
             }}
           />
           <div className="conversation-composer-controls">
-            {available ? (
-              <span className="composer-provider">
-                <Sparkles size={13} />
-                Codex
-              </span>
-            ) : (
+            <div className="composer-left-tools">
               <button
-                className="composer-connect"
-                onClick={settings}
-                title={connectionReason}
+                className="composer-attach"
+                onClick={() => fileInput.current?.click()}
+                aria-label={text("添加图片或文件", "Add images or files")}
+                title={text(
+                  "添加附件，和文字一起发送",
+                  "Add attachments to your message",
+                )}
               >
-                {text("连接 Codex", "Connect Codex")}
-                <ArrowUpRight size={13} />
+                <Paperclip size={16} />
               </button>
-            )}
+              {available ? (
+                <span className="composer-provider">
+                  <Sparkles size={13} />
+                  Codex
+                </span>
+              ) : (
+                <button
+                  className="composer-connect"
+                  onClick={settings}
+                  title={connectionReason}
+                >
+                  {text("连接 Codex", "Connect Codex")}
+                  <ArrowUpRight size={13} />
+                </button>
+              )}
+            </div>
             <div className="composer-send-controls">
               <span className="composer-key-hint">
                 {busy
@@ -476,7 +871,7 @@ export default function ChatPage({
               ) : (
                 <button
                   className="conversation-send"
-                  disabled={!available || !speech.trim()}
+                  disabled={!available || !hasDraft}
                   onClick={send}
                   aria-label={text("发送消息", "Send message")}
                   title={text("发送 · Enter", "Send · Enter")}
@@ -486,8 +881,24 @@ export default function ChatPage({
               )}
             </div>
           </div>
+          {dragging && (
+            <div className="composer-drop-hint" aria-hidden="true">
+              <ImageIcon size={22} strokeWidth={1.4} />
+              <span>
+                {text("松开，加入这条消息", "Drop into this message")}
+              </span>
+            </div>
+          )}
         </div>
-        {empty && (
+        {!!attachments.length && (
+          <div className="draft-attachments-note">
+            {text(
+              "附件会和文字一起交给 AI，发送前可以继续补充。",
+              "Text and attachments go to AI together. Keep adding context before you send.",
+            )}
+          </div>
+        )}
+        {empty && !references.length && (
           <div className="chat-suggestions">
             {examples.map(({ Icon, label, prompt }) => (
               <button
@@ -513,6 +924,43 @@ export default function ChatPage({
           </div>
         )}
       </div>
+      {visible && preview?.previewUrl && (
+        <div
+          className="overlay conversation-image-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreview(null);
+          }}
+        >
+          <div
+            className="conversation-image-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={text("图片预览", "Image preview")}
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (event.key === "Tab") {
+                event.preventDefault();
+                event.currentTarget
+                  .querySelector<HTMLButtonElement>("button")
+                  ?.focus();
+              }
+            }}
+          >
+            <div>
+              <span>{preview.name}</span>
+              <button
+                autoFocus
+                onClick={() => setPreview(null)}
+                aria-label={text("关闭预览", "Close preview")}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <img src={preview.previewUrl} alt={preview.name} />
+          </div>
+        </div>
+      )}
     </section>
   );
 }
