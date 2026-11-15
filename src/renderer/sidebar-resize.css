@@ -1,0 +1,25 @@
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sidebar-width) - 4px);
+  width: 8px;
+  z-index: 20;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  outline: none;
+}
+.sidebar-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  background: var(--brand);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.sidebar-resize-handle:hover::after { opacity: .35; }
+.sidebar-resize-handle.dragging::after,.sidebar-resize-handle:focus-visible::after { opacity: .7; }
+.sidebar-resizing,.sidebar-resizing * { cursor: col-resize !important; user-select: none !important; }

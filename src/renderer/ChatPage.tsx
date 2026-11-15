@@ -26,6 +26,9 @@ import {
   ListChecks,
   LoaderCircle,
   Plus,
+  FolderPlus,
+  Repeat2,
+  Trash2,
   Paperclip,
   NotebookPen,
   Sparkles,
@@ -45,31 +48,8 @@ export interface DraftAttachment {
   previewUrl?: string;
   file?: globalThis.File;
 }
-export interface ConversationAttachment {
-  id: string;
-  name: string;
-  bytes?: number;
-  kind: "image" | "file";
-  previewUrl?: string;
-}
-/** The ID binds the source; the title is display text only. */
-export interface ContentReference {
-  kind: "memo" | "task";
-  id: string;
-  title: string;
-  attachmentCount?: number;
-  asTask?: boolean;
-}
-export interface ConversationMessage extends ChatMessage {
-  attachments?: ConversationAttachment[];
-  references?: ContentReference[];
-  turnId?: string;
-  notice?: string;
-  activities?: AIActivity[];
-  state?: "working" | "completed" | "cancelled" | "error";
-  startedAt?: number;
-  finishedAt?: number;
-}
+export type { ConversationAttachment, ContentReference, ConversationMessage } from "../shared/chat-history";
+import type { ConversationAttachment, ContentReference, ConversationMessage } from "../shared/chat-history";
 
 function ReferenceChips({
   references,
@@ -212,148 +192,91 @@ function ReplyText({ text }: { text: string }) {
   );
 }
 
-function SourceCards({
-  sources,
-  isZh,
-  openMemo,
-  openTask,
-}: {
+function changePresentation(type: string, isZh: boolean) {
+  const labels: Record<string, [string, string]> = {
+    create: ["创建待办", "Create task"], add_subtask: ["创建子任务", "Add subtask"],
+    create_list: ["创建清单", "Create list"], create_recurring: ["创建重复待办", "Create recurring task"],
+    update_recurring: ["调整重复待办", "Edit recurring task"], update: ["更新待办", "Update task"],
+    complete: ["完成待办", "Mark complete"], uncomplete: ["恢复待办", "Reopen task"],
+    reschedule: ["调整日期", "Reschedule"], delete: ["删除待办", "Delete task"], set_tags: ["更新标签", "Set tags"],
+  };
+  const Icon = type === "create" || type === "add_subtask" ? Plus
+    : type === "create_list" ? FolderPlus
+    : type.includes("recurring") ? Repeat2
+    : type === "reschedule" ? CalendarDays
+    : type === "complete" ? Check
+    : type === "delete" ? Trash2 : ListChecks;
+  return { Icon, label: (labels[type] || ["待办", "Task"])[isZh ? 0 : 1] };
+}
+
+function SourceCards({ sources, changes = [], isZh, openMemo, openTask }: {
   sources: ChatSource[];
+  changes?: Proposal[];
   isZh: boolean;
   openMemo: (id: string) => void;
   openTask: (id: string) => void;
 }) {
-  const text = (zh: string, en: string) => (isZh ? zh : en);
+  const text = (zh: string, en: string) => isZh ? zh : en;
   const dateLabel = (source: ChatSource) => {
-    const value =
-      source.dueAt ||
-      source.dueDate ||
-      (source.kind === "memo" ? source.createdAt : undefined);
+    const value = source.dueAt || source.dueDate || (source.kind === "memo" ? source.createdAt : undefined);
     if (!value) return "";
-    const date = DateTime.fromISO(value, {
-      zone: source.timeZone || "local",
-    }).setLocale(isZh ? "zh-CN" : "en");
-    if (!date.isValid) return "";
-    return date.toFormat(
-      source.dueAt
-        ? isZh
-          ? "M月d日 HH:mm"
-          : "MMM d, HH:mm"
-        : isZh
-          ? "yyyy年M月d日"
-          : "MMM d, yyyy",
-    );
+    const date = DateTime.fromISO(value, { zone: source.timeZone || "local" }).setLocale(isZh ? "zh-CN" : "en");
+    return date.isValid ? date.toFormat(source.dueAt ? (isZh ? "M月d日 HH:mm" : "MMM d, HH:mm") : (isZh ? "yyyy年M月d日" : "MMM d, yyyy")) : "";
   };
-  return (
-    <div
-      className="chat-result-cards"
-      aria-label={text("相关记录", "Related records")}
-    >
-      {sources.slice(0, 6).map((source) => {
-        const open = () =>
-          source.kind === "task" ? openTask(source.id) : openMemo(source.id);
-        const date = dateLabel(source);
-        const images =
-          source.attachments
-            ?.filter((file) => file.kind === "image")
-            .slice(0, 3) || [];
-        const files =
-          source.attachments
-            ?.filter((file) => file.kind === "file")
-            .slice(0, 3) || [];
-        return (
-          <div
-            className="chat-result"
-            key={`${source.kind}:${source.id}`}
-            data-source-id={source.id}
-          >
-            <button
-              className={`chat-result-card is-${source.kind}`}
-              onClick={open}
-              aria-label={text(
-                `查看${source.kind === "task" ? "任务" : "资料"}：${source.title}`,
-                `Open ${source.kind === "task" ? "task" : "record"}: ${source.title}`,
-              )}
-            >
-              <span className="chat-result-meta">
-                <span
-                  className={`chat-result-kind ${source.status === "done" ? "is-done" : ""}`}
-                >
-                  {source.kind === "task" ? (
-                    source.status === "done" ? (
-                      <Check size={13} />
-                    ) : (
-                      <Circle size={12} />
-                    )
-                  ) : (
-                    <NotebookPen size={13} />
-                  )}
-                  {source.kind === "task"
-                    ? source.status === "done"
-                      ? text("已完成", "Completed")
-                      : text("待办", "To do")
-                    : text("资料", "Record")}
-                </span>
-                {source.listName && (
-                  <span className="chat-result-list">{source.listName}</span>
-                )}
-                {date && (
-                  <span className="chat-result-date">
-                    <CalendarDays size={11} />
-                    {date}
-                  </span>
-                )}
-              </span>
-              <strong className="chat-result-title">{source.title}</strong>
-              {source.text && (
-                <span className="chat-result-excerpt">{source.text}</span>
-              )}
-              {!!images.length && (
-                <span
-                  className={`chat-result-images ${images.length === 1 ? "single" : ""}`}
-                >
-                  {images.map((file) => (
-                    <img
-                      key={file.id}
-                      src={
-                        file.previewUrl || `telldo-memo://attachment/${file.id}`
-                      }
-                      alt={file.name}
-                      loading="lazy"
-                      onError={(event) => {
-                        event.currentTarget.hidden = true;
-                      }}
-                    />
-                  ))}
-                </span>
-              )}
-              {!!files.length && (
-                <span className="chat-result-files">
-                  {files.map((file) => (
-                    <span key={file.id}>
-                      <Paperclip size={12} />
-                      {file.name}
-                    </span>
-                  ))}
-                </span>
-              )}
-            </button>
-            <button className="chat-result-link" onClick={open}>
-              <span>
-                {source.kind === "task" ? (
-                  <ListChecks size={12} />
-                ) : (
-                  <NotebookPen size={12} />
-                )}
-                {source.title}
-              </span>
-              <ArrowUpRight size={12} />
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <div className="chat-result-cards" aria-label={text("相关记录", "Related records")}>
+    {sources.slice(0, 6).map(source => {
+      const open = () => source.kind === "task" ? openTask(source.id) : openMemo(source.id);
+      const action = source.kind === "task" ? changes.flatMap(proposal => proposal.actions).find(action =>
+        action.target_id === source.id || ("title" in action.patch && action.patch.title === source.title)) : undefined;
+      const presentation = action ? changePresentation(action.type, isZh) : {
+        Icon: source.kind === "memo" ? NotebookPen : source.status === "done" ? Check : ListChecks,
+        label: source.kind === "memo" ? text("资料", "Saved content") : source.status === "done" ? text("已完成", "Completed") : text("待办", "Task"),
+      };
+      const { Icon, label } = presentation;
+      const date = dateLabel(source);
+      const images = source.attachments?.filter(file => file.kind === "image").slice(0, 3) || [];
+      const files = source.attachments?.filter(file => file.kind === "file").slice(0, 3) || [];
+      return <div className="chat-result" key={`${source.kind}:${source.id}`} data-source-id={source.id}>
+        <button className={`chat-result-card is-${source.kind}`} onClick={open}
+          aria-label={text(`查看${source.kind === "task" ? "任务" : "资料"}：${source.title}`, `Open ${source.kind === "task" ? "task" : "record"}: ${source.title}`)}>
+          <span className="chat-result-symbol" aria-hidden="true"><Icon size={19} strokeWidth={1.7} /></span>
+          <span className="chat-result-content">
+            {source.kind !== "task" && <span className="chat-result-caption">{label}</span>}
+            <span className="chat-result-title">{source.title}</span>
+            {(source.listName || date || source.text) && <span className="chat-result-fields">
+              {source.listName && <span className="chat-result-field"><span>{text("清单", "List")}</span><span>{source.listName}</span></span>}
+              {date && <span className="chat-result-field"><span>{source.kind === "task" ? text("截止", "Due") : text("保存时间", "Saved")}</span><span>{date}</span></span>}
+              {source.text && <span className="chat-result-field"><span>{source.kind === "task" ? text("备注", "Notes") : text("内容", "Content")}</span><span className="chat-result-excerpt">{source.text}</span></span>}
+            </span>}
+            {!!images.length && <span className={`chat-result-images ${images.length === 1 ? "single" : ""}`}>
+              {images.map(file => <img key={file.id} src={file.previewUrl || `telldo-memo://attachment/${file.id}`} alt={file.name} loading="lazy" onError={event => { event.currentTarget.hidden = true; }} />)}
+            </span>}
+            {!!files.length && <span className="chat-result-files">{files.map(file => <span key={file.id}><Paperclip size={12} />{file.name}</span>)}</span>}
+          </span>
+        </button>
+
+      </div>;
+    })}
+  </div>;
+}
+
+/** Changes with no returned record (for example list creation or deletion) keep a useful detail entry. */
+function ChangeCards({ changes, isZh, review }: { changes: Proposal[]; isZh: boolean; review: (id: string) => void }) {
+  return <div className="chat-result-cards">
+    {changes.flatMap(proposal => proposal.actions.map((action, index) => {
+      const { Icon, label } = changePresentation(action.type, isZh);
+      const title = "name" in action.patch ? action.patch.name : "title" in action.patch && action.patch.title ? action.patch.title : proposal.summary;
+      const notes = "notes" in action.patch ? action.patch.notes : undefined;
+      return <div className="chat-result" key={`${proposal.id}:${index}`}>
+        <button className="chat-result-card" onClick={() => review(proposal.id)}>
+          <span className="chat-result-symbol" aria-hidden="true"><Icon size={19} /></span>
+          <span className="chat-result-content"><span className="chat-result-caption">{label}</span><span className="chat-result-title">{title}</span>
+            {notes && <span className="chat-result-fields"><span className="chat-result-field"><span>{isZh ? "备注" : "Notes"}</span><span className="chat-result-excerpt">{notes}</span></span></span>}
+          </span>
+        </button>
+      </div>;
+    }))}
+  </div>;
 }
 
 function Execution({
@@ -728,39 +651,15 @@ export default function ChatPage({
                     ...(message.proposalId ? [message.proposalId] : []),
                   ]),
                 );
+                const appliedChanges = proposalIds.map(id => proposals.find(proposal => proposal.id === id))
+                  .filter((proposal): proposal is Proposal => !!proposal && proposal.status === "applied");
                 const legacyMemoIds = message.memoIds?.filter(
                   (id) =>
                     !message.sources?.some(
                       (source) => source.kind === "memo" && source.id === id,
                     ),
                 );
-                return (
-                  <article
-                    key={message.id}
-                    className={`conversation-message ${message.role} ${message.error ? "has-error" : ""}`}
-                    aria-label={
-                      message.role === "user" ? text("你", "You") : "Telldo"
-                    }
-                  >
-                    {message.role === "assistant" && (
-                      <Execution message={message} isZh={isZh} />
-                    )}
-                    {message.content &&
-                      (message.role === "assistant" ? (
-                        <ReplyText text={message.content} />
-                      ) : (
-                        <div className="user-message-text">
-                          {message.content}
-                        </div>
-                      ))}
-                    {!!message.references?.length && (
-                      <ReferenceChips
-                        references={message.references}
-                        isZh={isZh}
-                        openMemo={openMemo}
-                      />
-                    )}
-                    {!!message.attachments?.length && (
+                const attachments = !!message.attachments?.length && (
                       <div
                         className="conversation-attachments"
                         aria-label={text(
@@ -773,6 +672,7 @@ export default function ChatPage({
                             <button
                               className="conversation-attachment-image"
                               key={file.id}
+                              title={file.name}
                               onClick={() => setPreview(file)}
                               aria-label={text(
                                 `预览 ${file.name}`,
@@ -796,7 +696,35 @@ export default function ChatPage({
                           ),
                         )}
                       </div>
+                    );
+                return (
+                  <article
+                    key={message.id}
+                    className={`conversation-message ${message.role} ${message.error ? "has-error" : ""}`}
+                    aria-label={
+                      message.role === "user" ? text("你", "You") : "Telldo"
+                    }
+                  >
+                    {message.role === "assistant" && (
+                      <Execution message={message} isZh={isZh} />
                     )}
+                    {message.role === "user" && attachments}
+                    {message.content &&
+                      (message.role === "assistant" ? (
+                        <ReplyText text={message.content} />
+                      ) : (
+                        <div className="user-message-text">
+                          {message.content}
+                        </div>
+                      ))}
+                    {!!message.references?.length && (
+                      <ReferenceChips
+                        references={message.references}
+                        isZh={isZh}
+                        openMemo={openMemo}
+                      />
+                    )}
+                    {message.role !== "user" && attachments}
                     {message.state === "working" && !message.content && (
                       <div className="reply-waiting" role="status">
                         {text("正在为你整理…", "Putting it together…")}
@@ -806,11 +734,13 @@ export default function ChatPage({
                     {!!message.sources?.length && (
                       <SourceCards
                         sources={message.sources}
+                        changes={appliedChanges}
                         isZh={isZh}
                         openMemo={openMemo}
                         openTask={openTask}
                       />
                     )}
+                    {!message.sources?.length && !!appliedChanges.length && <ChangeCards changes={appliedChanges} isZh={isZh} review={review} />}
                     {message.memoId &&
                       !message.sources?.some(
                         (source) =>
@@ -857,6 +787,7 @@ export default function ChatPage({
                         (message.appliedProposalIds?.includes(id)
                           ? "applied"
                           : "pending");
+                      if (status === "applied") return null;
                       return (
                         <button
                           key={id}
@@ -864,17 +795,11 @@ export default function ChatPage({
                           onClick={() => review(id)}
                         >
                           <span className="proposal-icon">
-                            {status === "applied" ? (
-                              <Check size={18} />
-                            ) : (
-                              <ListChecks size={18} />
-                            )}
+                            <ListChecks size={18} />
                           </span>
                           <span>
                             <strong>
-                              {status === "applied"
-                                ? text("更改已应用", "Changes applied")
-                                : status === "rejected"
+                              {status === "rejected"
                                   ? text("已取消提案", "Proposal dismissed")
                                   : status === "undone"
                                     ? text("已撤销更改", "Changes undone")
@@ -1179,19 +1104,7 @@ export default function ChatPage({
             ))}
           </div>
         )}
-        {!empty && (
-          <div className="conversation-footnote">
-            {permissionMode === "auto"
-              ? text(
-                  "询问即回答，更改自动执行。",
-                  "Answers right away. Changes apply automatically.",
-                )
-              : text(
-                  "询问即回答，更改由你确认。",
-                  "Answers right away. Changes with your approval.",
-                )}
-          </div>
-        )}
+
       </div>
       {visible && preview?.previewUrl && (
         <div

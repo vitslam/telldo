@@ -1074,7 +1074,7 @@ button.brand:focus-visible {
 }
 .reply-prose {
   font-size: 14px;
-  line-height: 1.95;
+  line-height: 1.7;
   color: var(--text);
   overflow-wrap: anywhere;
   user-select: text;
@@ -1085,7 +1085,7 @@ button.brand:focus-visible {
 .reply-prose h3 {
   font-size: 15px;
   font-weight: 600;
-  margin: 18px 0 7px;
+  margin: 14px 0 5px;
 }
 .reply-prose h3:first-child {
   margin-top: 0;
@@ -1101,13 +1101,13 @@ button.brand:focus-visible {
   border-radius: 4px;
 }
 .reply-break {
-  height: 10px;
+  height: 7px;
 }
 .reply-list-item {
   display: flex;
   align-items: baseline;
   gap: 11px;
-  margin: 3px 0;
+  margin: 2px 0;
   padding-left: 4px;
 }
 .reply-list-item > span {
@@ -2105,4 +2105,75 @@ button.brand:focus-visible {
   :root[data-platform="darwin"] .sidebar {
     padding-top: calc(28px + var(--window-titlebar-height));
   }
+}
+
+/* Align the section action with the list counts, without doubled insets. */
+.sidebar .section-label {
+  margin: 28px 0 8px;
+  padding: 0 3px 0 13px;
+  min-height: 28px;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.9px;
+}
+.sidebar .section-label button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  margin-left: auto;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--side-text);
+  opacity: 0.85;
+}
+.sidebar .section-label button:hover {
+  background: color-mix(in srgb, var(--side-text) 12%, transparent);
+  opacity: 1;
+}
+.sidebar .section-label button:focus-visible {
+  outline: 1.5px solid var(--side-text);
+  outline-offset: 1px;
+}
+
+
+/* User uploads sit above the message, separate from its text bubble. */
+.conversation-message.user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+}
+.conversation-message.user .user-message-text {
+  max-width: 100%;
+  padding: 12px 18px;
+  border-radius: 18px 18px 5px 18px;
+  background: var(--subtle);
+}
+.conversation-message.user .conversation-attachments {
+  justify-content: flex-end;
+  max-width: 100%;
+  gap: 8px;
+  margin: 0;
+}
+.conversation-message.user .conversation-attachment-image {
+  flex: 0 0 auto;
+  width: 112px;
+  height: 112px;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 10px;
+}
+.conversation-message.user .conversation-attachment-image img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  object-fit: cover;
+}
+.conversation-message.user .conversation-attachment-image > span {
+  display: none;
 }

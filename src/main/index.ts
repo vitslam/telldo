@@ -1,3 +1,4 @@
+import { ChatHistory } from "./chat-history";
 import { ModelRoundProgress } from "./model-round-progress";
 import { chatSources } from "./chat-sources";
 import type { ContextScheduleItem } from "./context-repository";
@@ -51,6 +52,7 @@ let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let service: TaskService;
+let chatHistory: ChatHistory;
 let memos: MemoService;
 let contexts: ContextRepository;
 let schedules: ScheduleService;
@@ -376,6 +378,12 @@ async function snapshot(range?: { start: string; end: string; zone: string }) {
 }
 async function dispatch(method: string, args: any[]) {
   switch (method) {
+    case "chatHistoryList":
+      return chatHistory.list(args[0]);
+    case "chatHistoryLoad":
+      return chatHistory.load(args[0]);
+    case "chatHistorySave":
+      return chatHistory.save(args[0], args[1]);
     case "snapshot":
       return snapshot(args[0]);
     case "memoList":
@@ -1222,6 +1230,7 @@ else {
     .then(async () => {
       await mkdir(app.getPath("userData"), { recursive: true });
       service = new TaskService(join(app.getPath("userData"), "telldo.sqlite"));
+      chatHistory = new ChatHistory(service.db);
       memos = new MemoService(app.getPath("userData"));
       contexts = new ContextRepository(service, memos, zone);
       service.db.exec(

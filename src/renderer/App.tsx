@@ -1,3 +1,6 @@
+import ChatHistoryDialog from "./ChatHistoryDialog";
+import SidebarResizeHandle from "./SidebarResizeHandle";
+import { useChatHistory } from "./use-chat-history";
 import { ProgressBatcher, type ProgressEnvelope } from "./progress-batcher";
 import DetailCardModal, { isTopmostOverlay } from "./DetailCardModal";
 import MemoPage from "./MemoPage";
@@ -34,6 +37,7 @@ import {
   Trash2,
   LoaderCircle,
   SquarePen,
+  History,
   NotebookPen,
   Paperclip,
   FolderPlus,
@@ -378,7 +382,23 @@ export default function App() {
       if (event.type === "memo-changed") refresh();
     });
   }, []);
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const { messages, setMessages, activeId: chatId, ready: historyReady, switching: switchingChat, change: changeChat, flush: saveChat } = useChatHistory(setError);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  function resetChatDraft() {
+    setSpeech("");
+    setDraftAttachments([]);
+    setReferences([]);
+    retryCapture.current = null;
+    for (const url of ownedUrls.current) URL.revokeObjectURL(url);
+    ownedUrls.current.clear();
+  }
+  async function selectChat(id?: string) {
+    if (busy || asking.current) return;
+    if (!(await changeChat(id))) return;
+    resetChatDraft();
+    setHistoryOpen(false);
+    requestAnimationFrame(() => speechInput.current?.focus());
+  }
   const progressBuffer = useRef<ProgressBatcher | null>(null);
   if (!progressBuffer.current)
     progressBuffer.current = new ProgressBatcher((batch) => {
@@ -414,21 +434,17 @@ export default function App() {
   const rangeRef = useRef<
     { start: string; end: string; zone: string } | undefined
   >(undefined);
-  const searchInput = useRef<HTMLInputElement>(null);
   const speechInput = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (document.querySelector(".overlay")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
         const memoSearch =
           document.querySelector<HTMLInputElement>(".memo-search-input");
         if (memoSearch?.getClientRects().length) {
+          event.preventDefault();
           memoSearch.focus();
           memoSearch.select();
-        } else {
-          searchInput.current?.focus();
-          searchInput.current?.select();
         }
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
@@ -438,13 +454,7 @@ export default function App() {
         setSelected(null);
         requestAnimationFrame(() => speechInput.current?.focus());
       }
-      if (
-        event.key === "Escape" &&
-        document.activeElement === searchInput.current
-      ) {
-        setSearch("");
-        searchInput.current?.blur();
-      }
+
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
@@ -967,7 +977,7 @@ export default function App() {
         : `Due ${label}${time}`
       : label;
   };
-  if (!data)
+  if (!data || !historyReady)
     return (
       <div className="loading">
         <div className="brand-mark">t.</div>
@@ -1065,13 +1075,6 @@ export default function App() {
             </button>
           ))}
         </div>
-        <button
-          className="new-list"
-          onClick={() => setListDialog({ name: "" })}
-        >
-          <Plus size={16} />
-          {t("New list")}
-        </button>
         <div className="sidebar-bottom">
           <button className="nav-item" onClick={() => setSettingsOpen(true)}>
             <SettingsIcon size={18} />
@@ -1079,6 +1082,7 @@ export default function App() {
           </button>
         </div>
       </aside>
+      <SidebarResizeHandle isZh={isZh} />
       <main>
         <header className="topbar">
           <div className="breadcrumb">
@@ -1102,49 +1106,19 @@ export default function App() {
             </strong>
           </div>
           {isConversation && (
-            <button
-              className="new-conversation"
-              disabled={busy || !messages.length}
-              onClick={() => {
-                setMessages([]);
-                setSpeech("");
-                setDraftAttachments([]);
-                setReferences([]);
-                for (const url of ownedUrls.current) URL.revokeObjectURL(url);
-                ownedUrls.current.clear();
-                speechInput.current?.focus();
-              }}
-              title={
-                isZh
-                  ? "开始新对话，保留任务和提案"
-                  : "Start fresh; tasks and proposals are kept"
-              }
-            >
-              <SquarePen size={15} />
-              <span>{isZh ? "新对话" : "New chat"}</span>
-            </button>
+            <div className="conversation-actions">
+              <button className="new-conversation history-trigger" disabled={busy || switchingChat}
+                onClick={() => void saveChat().then(() => setHistoryOpen(true)).catch(error => setError(String(error)))} title={isZh ? "查看并继续之前的对话" : "Open a previous conversation"}>
+                <History size={15} /><span>{isZh ? "历史记录" : "History"}</span>
+              </button>
+              <button className="new-conversation" disabled={busy || switchingChat || !messages.length}
+                onClick={() => void selectChat().catch(error => setError(String(error)))}
+                title={isZh ? "开始新对话，保留任务和提案" : "Start fresh; tasks and proposals are kept"}>
+                <SquarePen size={15} /><span>{isZh ? "新对话" : "New chat"}</span>
+              </button>
+            </div>
           )}
-          {!isMemoView && (
-            <label className="search">
-              <Search size={17} />
-              <input
-                ref={searchInput}
-                aria-label={t("Search tasks, notes, tags…")}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t("Search tasks, notes, tags…")}
-              />
-              {search && (
-                <button
-                  aria-label={isZh ? "清除搜索" : "Clear search"}
-                  onClick={() => setSearch("")}
-                >
-                  <X size={14} />
-                </button>
-              )}
-              {!search && <kbd>⌘ K</kbd>}
-            </label>
-          )}
+
         </header>
         <div className="conversation-page-slot" hidden={!isConversation}>
           {error && (
@@ -1179,7 +1153,7 @@ export default function App() {
             }
             visible={isConversation}
             messages={messages}
-            busy={busy}
+            busy={busy || switchingChat}
             cancelling={cancelling}
             isZh={isZh}
             proposals={data.proposals}
@@ -1565,6 +1539,7 @@ export default function App() {
           {toast}
         </div>
       )}
+      {historyOpen && <ChatHistoryDialog isZh={isZh} activeId={chatId} select={id => selectChat(id)} close={() => setHistoryOpen(false)} />}
       {settingsOpen && (
         <SettingsDialog
           data={data}

@@ -1,0 +1,12 @@
+/* Pointer activation keeps the focus target without leaving a decorative ring.
+   Keyboard navigation still exposes a small, consistent location indicator. */
+:root[data-focus-input="pointer"] :is(button, summary, [role="button"]):focus {
+  outline: none !important;
+}
+:root[data-focus-input="pointer"] .composer-permission:focus-within {
+  outline: none;
+}
+:root[data-focus-input="keyboard"] :is(button, summary, [role="button"]):focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--brand) 55%, transparent) !important;
+  outline-offset: 2px !important;
+}
