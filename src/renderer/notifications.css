@@ -1,0 +1,22 @@
+.notification-settings { display: flex; flex-direction: column; }
+.notification-options { margin-top: 8px; }
+.settings-page .notification-option { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--border); margin: 0; cursor: pointer; }
+.notification-option > svg { flex-shrink: 0; color: var(--secondary); }
+.notification-option-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
+.notification-option-copy > span { font-size: 13px; font-weight: 400; color: var(--text); }
+.notification-option-copy > small { font-size: 11px; font-weight: 400; color: var(--faint); line-height: 1.5; }
+.settings-page .notification-option input[role="switch"] { appearance: none; -webkit-appearance: none; position: relative; flex: 0 0 30px; width: 30px; height: 18px; min-height: 0; margin: 0; padding: 0; border: none; border-radius: 20px; background: var(--border); cursor: pointer; transition: background 150ms ease; }
+.notification-option input[role="switch"]::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #0002; transition: transform 150ms ease; }
+.settings-page .notification-option input[role="switch"]:checked { background: var(--brand); }
+.notification-option input[role="switch"]:checked::after { transform: translateX(12px); }
+.notification-option input[role="switch"]:disabled { opacity: .35; cursor: default; }
+.notification-tools { display: flex; align-items: center; gap: 18px; margin-top: 20px; }
+.notification-tools button { display: inline-flex; align-items: center; gap: 7px; padding: 5px 0; color: var(--secondary); font-size: 12px; background: transparent; }
+.notification-tools button:hover { color: var(--brand); background: transparent; }
+.notification-feedback,.notification-help { margin: 14px 0 0; font-size: 11px; font-weight: 400; line-height: 1.7; color: var(--faint); }
+.notification-feedback { color: var(--secondary); overflow-wrap: anywhere; }
+.notification-feedback.notification-error { color: #bd6d64; }
+.task-reminder-shortcuts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: -5px; }
+.task-reminder-shortcuts button { padding: 4px 7px; border-radius: 5px; background: var(--subtle); font-size: 11px; color: var(--secondary); }
+.task-reminder-shortcuts button:hover { color: var(--brand); }
+@media (prefers-reduced-motion: reduce) { .notification-option input[role="switch"],.notification-option input[role="switch"]::after { transition: none; } }

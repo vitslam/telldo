@@ -1,3 +1,4 @@
+import { reminderForTimeChange } from "../shared/task-timing";
 import { nextListColor } from "../shared/list-colors";
 import Database from "./sqlite";
 import { randomUUID } from "node:crypto";
@@ -139,6 +140,9 @@ export class TaskService {
       permissionMode: "confirm",
       alwaysConfirm: false,
       closeToTray: true,
+      notificationsEnabled: true,
+      notificationSound: true,
+      notifyAIComplete: true,
       ...(row ? JSON.parse(row.value) : {}),
     };
   }
@@ -162,6 +166,9 @@ export class TaskService {
             "permissionMode",
             "alwaysConfirm",
             "closeToTray",
+            "notificationsEnabled",
+            "notificationSound",
+            "notifyAIComplete",
           ].includes(k),
       )
     )
@@ -178,7 +185,10 @@ export class TaskService {
       value.codexPath.includes("\0") ||
       !["confirm", "auto"].includes(value.permissionMode) ||
       typeof value.alwaysConfirm !== "boolean" ||
-      typeof value.closeToTray !== "boolean"
+      typeof value.closeToTray !== "boolean" ||
+      typeof value.notificationsEnabled !== "boolean" ||
+      typeof value.notificationSound !== "boolean" ||
+      typeof value.notifyAIComplete !== "boolean"
     )
       throw new Error("Invalid settings / 设置无效");
     const host = value.sshHost;
@@ -461,6 +471,8 @@ export class TaskService {
   createTask(input: TaskPatch): Task {
     return this.db.transaction(() => {
       const patch = parseTaskPatch(input);
+      if (patch.due_kind === "datetime" && patch.due_at && patch.reminder_at === undefined)
+        patch.reminder_at = patch.due_at;
       const at = now();
       const value: Task = {
         id: id(),
@@ -542,6 +554,8 @@ export class TaskService {
       const patch = parseTaskPatch(input);
       const before = this.getTask(taskId);
       this.assertVersion(before, expectedVersion);
+      const reminder = reminderForTimeChange(before, patch, patch.time_zone || before.time_zone || this.getSettings().timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone);
+      if (reminder !== undefined) patch.reminder_at = reminder;
       if (
         !this.editingSeries &&
         this.db

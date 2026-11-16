@@ -13,6 +13,8 @@ import {
 import { validateRecurrence } from "../shared/recurrence";
 export { validateRecurrence, type RecurrenceSpec } from "../shared/recurrence";
 export interface Reminder {
+  targetId?: string;
+  fireAt?: string;
   taskId: string;
   title: string;
   body?: string;
@@ -568,6 +570,13 @@ export class ScheduleService {
       return after;
     })();
   }
+  retryNotifications(notices: Reminder[]) {
+    const remove = this.db.prepare("DELETE FROM notification_log WHERE target_id=? AND fire_at=?");
+    this.db.transaction(() => {
+      for (const notice of notices)
+        if (notice.targetId && notice.fireAt) remove.run(notice.targetId, notice.fireAt);
+    })();
+  }
   dueNotifications(now: Clock = new Date(), startup = false): Reminder[] {
     this.materialize(now);
     return this.db.transaction(() => {
@@ -595,7 +604,7 @@ export class ScheduleService {
             startup ? 1 : 0,
           ).changes
         )
-          result.push(reminder);
+          result.push({ ...reminder, targetId: target, fireAt: time.toUTC().toISO()! });
       };
       for (const task of tasks) {
         if (!recurring.has(task.id)) {

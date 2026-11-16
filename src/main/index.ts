@@ -1,3 +1,4 @@
+import { NotificationService, notificationTarget, type NotificationTarget } from "./notification-service";
 import { ChatHistory } from "./chat-history";
 import { ModelRoundProgress } from "./model-round-progress";
 import { chatSources } from "./chat-sources";
@@ -23,6 +24,7 @@ import {
   nativeTheme,
   shell,
   protocol,
+  powerMonitor,
 } from "electron";
 import { join } from "node:path";
 import { readFile, mkdir, stat, writeFile } from "node:fs/promises";
@@ -63,6 +65,10 @@ let aiCancelled = false;
 let aiProbing = false;
 let capabilities: Capabilities | null = null;
 let timer: NodeJS.Timeout;
+let notifications: NotificationService;
+let rendererReady = false;
+let restoredNotifications: Notification[] = [];
+let pendingNotification: NotificationTarget | undefined;
 const systemZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 const settings = (): Settings => service.getSettings();
 const zone = () => settings().timeZone || systemZone();
@@ -135,6 +141,7 @@ function send(type: string, data: unknown) {
 }
 function show(taskId?: string) {
   if (!win) createWindow();
+  if (win?.isMinimized()) win.restore();
   win?.show();
   win?.focus();
   if (taskId) {
@@ -143,31 +150,28 @@ function show(taskId?: string) {
     else send("select", taskId);
   }
 }
+function deliverNotificationNavigation() {
+  if (!pendingNotification || !rendererReady || !win || win.isDestroyed()) return;
+  const target = pendingNotification;
+  pendingNotification = undefined;
+  if (target.kind === "task") {
+    try {
+      const task = service.getTask(target.id);
+      send("notification-open", { ...target, listId: task.list_id });
+    } catch { /* A task may have been removed since the notification appeared. */ }
+  } else send("notification-open", target);
+}
+function openNotification(target?: NotificationTarget) {
+  pendingNotification = target;
+  show();
+  deliverNotificationNavigation();
+}
 function notify(startup = false) {
-  const notices = schedules.dueNotifications(new Date(), startup);
-  send("changed", null);
-  if (!notices.length) return;
-  const zh =
-    settings().language === "zh" ||
-    (settings().language === "system" && app.getLocale().startsWith("zh"));
-  if (startup) {
-    const n = new Notification({
-      title: "Telldo",
-      body: zh
-        ? `你有 ${notices.length} 条待处理的过期提醒`
-        : `${notices.length} overdue reminder(s) to review`,
-    });
-    n.on("click", () => show(notices[0].taskId));
-    n.show();
-  } else
-    for (const item of notices) {
-      const n = new Notification({ title: "Telldo", body: item.title });
-      n.on("click", () => show(item.taskId));
-      n.show();
-    }
+  notifications.reminders(startup);
   send("changed", null);
 }
 function createWindow() {
+  rendererReady = false;
   win = new BrowserWindow({
     width: 1420,
     height: 920,
@@ -188,6 +192,7 @@ function createWindow() {
       sandbox: true,
     },
   });
+  win.webContents.on("did-start-loading", () => { rendererReady = false; });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.on("close", (e) => {
@@ -378,6 +383,19 @@ async function snapshot(range?: { start: string; end: string; zone: string }) {
 }
 async function dispatch(method: string, args: any[]) {
   switch (method) {
+    case "notificationReady":
+      rendererReady = true;
+      deliverNotificationNavigation();
+      return true;
+    case "notificationStatus":
+      return notifications.status();
+    case "notificationTest":
+      if (typeof args[0] !== "boolean") throw Error("Invalid notification sound setting");
+      return notifications.test(args[0]);
+    case "notificationSettings":
+      if (process.platform !== "darwin") return false;
+      await shell.openExternal("x-apple.systempreferences:com.apple.Notifications-Settings.extension");
+      return true;
     case "chatHistoryList":
       return chatHistory.list(args[0]);
     case "chatHistoryLoad":
@@ -527,10 +545,12 @@ async function dispatch(method: string, args: any[]) {
     case "probe":
       return probeAI();
     case "settings": {
-      if (aiRunning || aiProbing)
+      const previous = settings(), before = aiConfig(previous);
+      if ((aiRunning || aiProbing) && aiConfig({ ...previous, ...args[0] }) !== before)
         throw Error("Codex is busy. / Codex 正忙，请完成或取消当前请求。");
-      const before = aiConfig(settings()),
-        value = service.setSettings(args[0]);
+      if (!previous.notificationsEnabled && args[0]?.notificationsEnabled === true)
+        schedules.dueNotifications(new Date(), true);
+      const value = service.setSettings(args[0]);
       if (aiConfig(value) !== before) await probeAI();
       return value;
     }
@@ -1267,6 +1287,33 @@ else {
         }
       });
       schedules = service.schedules;
+      notifications = new NotificationService(schedules, {
+        supported: () => Notification.isSupported(),
+        create: options => {
+          const notice = new Notification(options);
+          return {
+            show: () => notice.show(),
+            onClick: callback => { notice.on("click", callback); },
+            onClose: callback => { notice.on("close", callback); },
+            onFailed: callback => { notice.on("failed", (_event, error) => callback(error)); },
+          };
+        },
+        settings,
+        isChinese: () => (settings().language === "system" ? app.getLocale() : settings().language).startsWith("zh"),
+        isForeground: () => !!win && win.isVisible() && win.isFocused() && !win.isMinimized(),
+        open: openNotification,
+        changed: () => send("notification-status", notifications.status()),
+      });
+      // Rebind Notification Center entries after a restart; do not replay them.
+      if (process.platform === "darwin" && Notification.isSupported()) {
+        void Notification.getHistory().then(items => {
+          restoredNotifications = items;
+          for (const notice of items) {
+            const target = notificationTarget(notice.id);
+            if (target) notice.on("click", () => openNotification(target));
+          }
+        }).catch(() => {});
+      }
       calendar = new CalendarService(service);
       adapter = new CodexAdapter({
         resourceDir: join(app.getAppPath(), "resources"),
@@ -1278,7 +1325,10 @@ else {
         )
           throw Error("Untrusted sender");
         try {
-          return await dispatch(method, args);
+          const result = await dispatch(method, args);
+          if (method === "ask" && !aiCancelled)
+            notifications.conversation(args[5]?.chatId, !!result && typeof result === "object" && "kind" in result && result.kind === "proposal");
+          return result;
         } catch (error) {
           throw new Error(
             error instanceof Error ? error.message : String(error),
@@ -1306,7 +1356,8 @@ else {
       );
       tray.on("click", () => show());
       notify(true);
-      timer = setInterval(() => notify(), 15_000);
+      timer = setInterval(() => notify(), 5_000);
+      powerMonitor.on("resume", () => notify(true));
       await probeAI();
       send("changed", null);
     })
@@ -1322,6 +1373,7 @@ else {
     quitting = true;
     clearInterval(timer);
     adapter?.cancel();
+    notifications?.dispose();
   });
   app.on("will-quit", () => {
     service?.close();

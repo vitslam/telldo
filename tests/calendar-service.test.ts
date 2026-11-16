@@ -25,6 +25,7 @@ describe("calendar transactions", () => {
   const add = (patch: TaskPatch = {}) =>
     service.createTask({
       title: "Date test",
+      reminder_at: null, // Date-conversion fixtures opt out of the new default reminder.
       due_kind: "date",
       due_date: "2026-11-20",
       ...patch,

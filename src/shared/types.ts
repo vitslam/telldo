@@ -182,6 +182,9 @@ export interface Settings {
   permissionMode: "confirm" | "auto";
   alwaysConfirm: boolean;
   closeToTray: boolean;
+  notificationsEnabled: boolean;
+  notificationSound: boolean;
+  notifyAIComplete: boolean;
 }
 export interface Capabilities {
   appServer?: boolean;
