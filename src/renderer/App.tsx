@@ -1,3 +1,5 @@
+import ShortcutsDialog from "./ShortcutsDialog";
+import { matchShortcut, shortcutLabel, type ShortcutId } from "../shared/shortcuts";
 import TaskTags from "./TaskTags";
 import { projectTaskRows } from "../shared/task-rows";
 import TaskTiming from "./TaskTiming";
@@ -26,6 +28,7 @@ import { applyAppearance } from "./appearance";
 import { calendarMonthRange } from "../shared/calendar";
 import { DateTime } from "luxon";
 import {
+  Keyboard,
   Sun,
   CalendarDays,
   Layers,
@@ -367,6 +370,8 @@ export default function App() {
     [proposalId, setProposalId] = useState<string | null>(null),
     [confirm, setConfirm] = useState<{
       message: string;
+      label?: string;
+      destructive?: boolean;
       run: () => Promise<unknown>;
     } | null>(null);
   const [references, setReferences] = useState<ContentReference[]>([]);
@@ -400,6 +405,11 @@ export default function App() {
   }, []);
   const { messages, setMessages, activeId: chatId, ready: historyReady, switching: switchingChat, change: changeChat, flush: saveChat } = useChatHistory(setError);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutHandler = useRef<(id: ShortcutId) => boolean>(() => false);
+  const quickTaskInput = useRef<HTMLInputElement>(null);
+  const mac = window.telldo.platform === "darwin";
+  const keyHint = (id: ShortcutId) => shortcutLabel(id, mac);
   function resetChatDraft() {
     setSpeech("");
     setDraftAttachments([]);
@@ -472,24 +482,9 @@ export default function App() {
   const speechInput = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
-      if (document.querySelector(".overlay")) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        const memoSearch =
-          document.querySelector<HTMLInputElement>(".memo-search-input");
-        if (memoSearch?.getClientRects().length) {
-          event.preventDefault();
-          memoSearch.focus();
-          memoSearch.select();
-        }
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
-        event.preventDefault();
-        setView("assistant");
-        setSearch("");
-        setSelected(null);
-        requestAnimationFrame(() => speechInput.current?.focus());
-      }
-
+      if (event.defaultPrevented) return;
+      const id = matchShortcut(event, window.telldo.platform === "darwin");
+      if (id && shortcutHandler.current(id)) event.preventDefault();
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
@@ -617,6 +612,25 @@ export default function App() {
       });
       setNewTask("");
     });
+  }
+  async function showHistory() {
+    if (busy || switchingChat) return;
+    await saveChat();
+    openConversation();
+    setHistoryOpen(true);
+  }
+  function startNewChat() {
+    if (busy || switchingChat) return;
+    openConversation();
+    if (!messages.length) return;
+    if (speech.trim() || draftAttachments.length || references.length) {
+      setConfirm({
+        message: isZh ? "当前有未发送的内容。开始新对话并清除草稿？" : "You have an unsent draft. Start a new chat and clear it?",
+        label: isZh ? "开始新对话" : "Start new chat",
+        destructive: false,
+        run: () => selectChat(),
+      });
+    } else void selectChat().catch(error => setError(String(error)));
   }
   function openConversation() {
     setView("assistant");
@@ -986,6 +1000,47 @@ export default function App() {
         : `Due ${label}${time}`
       : label;
   };
+  shortcutHandler.current = id => {
+    if (!data || !historyReady) return false;
+    if (id === "help") { setShortcutsOpen(open => !open); return true; }
+    const overlays = Array.from(document.querySelectorAll<HTMLElement>(".overlay")).filter(node => node.getClientRects().length);
+    if (overlays.length) {
+      if (id !== "submit") return false;
+      const top = overlays.reduce((a, b) => Number(getComputedStyle(a).zIndex) > Number(getComputedStyle(b).zIndex) ? a : b);
+      top.querySelector<HTMLButtonElement>('[data-shortcut-save]:not(:disabled)')?.click();
+      return true;
+    }
+    if (["assistant", "memos", "today", "planned", "anytime"].includes(id)) {
+      setView(id); setSearch(""); setSelected(null); setSelectedMemoId(null);
+      if (id === "assistant") requestAnimationFrame(() => speechInput.current?.focus());
+      return true;
+    }
+    switch (id) {
+      case "focus-ai": openConversation(); return true;
+      case "new-chat": startNewChat(); return true;
+      case "history": void showHistory().catch(error => setError(String(error))); return true;
+      case "new-list": setListDialog({ name: "", color: nextListColor(lists) }); return true;
+      case "settings": setSettingsOpen(true); return true;
+      case "timeline-search":
+        setView("memos"); setSearch(""); setSelected(null);
+        requestAnimationFrame(() => { const input = document.querySelector<HTMLInputElement>(".memo-search-input"); input?.focus(); input?.select(); });
+        return true;
+      case "new-task":
+        setView(lists.some(list => list.id === view) || view === "today" || view === "anytime" ? view : lastListId.current || lists[0]?.id || "today");
+        setSearch(""); setSelected(null); setSelectedMemoId(null);
+        requestAnimationFrame(() => quickTaskInput.current?.focus());
+        return true;
+      case "attach":
+        openConversation();
+        requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".composer-attach")?.click());
+        return true;
+      case "stop": if (busy) void cancelConversation(); return true;
+      case "submit":
+        if (view === "assistant") document.querySelector<HTMLButtonElement>('.conversation-send:not(.stop):not(:disabled)')?.click();
+        return true;
+      default: return false;
+    }
+  };
   if (!data || !historyReady)
     return (
       <div className="loading">
@@ -1022,6 +1077,7 @@ export default function App() {
             return (
               <button
                 key={String(id)}
+                title={`${t(String(label))} · ${keyHint(String(id) as ShortcutId)}`}
                 className={`nav-item ${view === id ? "active" : ""}`}
                 onClick={() => {
                   setView(String(id));
@@ -1083,10 +1139,12 @@ export default function App() {
           ))}
         </div>
         <div className="sidebar-bottom">
-          <button className="nav-item" onClick={() => setSettingsOpen(true)}>
-            <SettingsIcon size={18} />
-            {t("Settings")}
-          </button>
+          <div className="sidebar-utilities">
+            <button className="nav-item" title={`${t("Settings")} · ${keyHint("settings")}`} onClick={() => setSettingsOpen(true)}>
+              <SettingsIcon size={18} />{t("Settings")}
+            </button>
+            <button className="shortcuts-trigger" aria-label={isZh ? "快捷键" : "Keyboard shortcuts"} title={`${isZh ? "快捷键" : "Keyboard shortcuts"} · ${keyHint("help")}`} onClick={() => setShortcutsOpen(true)}><Keyboard size={16} /></button>
+          </div>
         </div>
       </aside>
       <SidebarResizeHandle isZh={isZh} />
@@ -1115,12 +1173,12 @@ export default function App() {
           {isConversation && (
             <div className="conversation-actions">
               <button className="new-conversation history-trigger" disabled={busy || switchingChat}
-                onClick={() => void saveChat().then(() => setHistoryOpen(true)).catch(error => setError(String(error)))} title={isZh ? "查看并继续之前的对话" : "Open a previous conversation"}>
+                onClick={() => void showHistory().catch(error => setError(String(error)))} title={`${isZh ? "查看并继续之前的对话" : "Open a previous conversation"} · ${keyHint("history")}`}>
                 <History size={15} /><span>{isZh ? "历史记录" : "History"}</span>
               </button>
               <button className="new-conversation" disabled={busy || switchingChat || !messages.length}
-                onClick={() => void selectChat().catch(error => setError(String(error)))}
-                title={isZh ? "开始新对话，保留任务和提案" : "Start fresh; tasks and proposals are kept"}>
+                onClick={startNewChat}
+                title={`${isZh ? "开始新对话，保留任务和提案" : "Start fresh; tasks and proposals are kept"} · ${keyHint("new-chat")}`}>
                 <SquarePen size={15} /><span>{isZh ? "新对话" : "New chat"}</span>
               </button>
             </div>
@@ -1384,14 +1442,16 @@ export default function App() {
                 <div className="quick-add">
                   <Plus size={20} />
                   <input
+                    ref={quickTaskInput}
                     aria-label="New task"
+                    title={keyHint("new-task")}
                     placeholder={
                       isZh ? "手动添加任务…" : "Add a task manually…"
                     }
                     value={newTask}
                     onChange={(e) => setNewTask(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") void addTask();
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229 && !e.repeat) { e.preventDefault(); void addTask(); }
                     }}
                   />
                   <button
@@ -1546,9 +1606,11 @@ export default function App() {
           {toast}
         </div>
       )}
+      {shortcutsOpen && <ShortcutsDialog isZh={isZh} close={() => setShortcutsOpen(false)} />}
       {historyOpen && <ChatHistoryDialog isZh={isZh} activeId={chatId} select={id => selectChat(id)} close={() => setHistoryOpen(false)} />}
       {settingsOpen && (
         <SettingsDialog
+          openShortcuts={() => setShortcutsOpen(true)}
           data={data}
           t={t}
           close={() => setSettingsOpen(false)}
@@ -1634,6 +1696,7 @@ export default function App() {
               <button
                 className="primary"
                 type="submit"
+                data-shortcut-save
                 disabled={!listDialog.name.trim()}
               >
                 {t(listDialog.id ? "Save changes" : "Create list")}
@@ -1668,7 +1731,7 @@ export default function App() {
           <div className="dialog-actions">
             <button onClick={() => setConfirm(null)}>{t("Cancel")}</button>
             <button
-              className="danger primary"
+              className={confirm.destructive === false ? "primary" : "danger primary"}
               onClick={() =>
                 void act(async () => {
                   await confirm.run();
@@ -1676,7 +1739,7 @@ export default function App() {
                 })
               }
             >
-              {t("Delete")}
+              {confirm.label || t("Delete")}
             </button>
           </div>
         </Modal>
@@ -2241,7 +2304,7 @@ function TaskDetail({
           </button>
         )}
         <span className="task-card-footer-space" />
-        {hasChanges && <button className="primary task-card-save" disabled={saving} onClick={() => void save()}>
+        {hasChanges && <button data-shortcut-save className="primary task-card-save" disabled={saving} onClick={() => void save()}>
           {saving ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}
           {t("Save changes")}
         </button>}
@@ -2266,11 +2329,13 @@ function TaskDetail({
   );
 }
 function SettingsDialog({
+  openShortcuts,
   data,
   t,
   close,
   act,
 }: {
+  openShortcuts: () => void;
   data: Snapshot;
   t: (s: string) => string;
   close: () => void;
@@ -2315,6 +2380,7 @@ function SettingsDialog({
               <span>{t(label)}</span>
             </button>
           ))}
+          <button className="settings-shortcuts-link" onClick={openShortcuts}><Keyboard size={17} /><span>{t("General") === "通用" ? "快捷键" : "Keyboard shortcuts"}</span></button>
         </nav>
         <div className="settings-pages">
           <div className="settings-page" hidden={section !== "appearance"}>
@@ -2594,6 +2660,7 @@ function SettingsDialog({
       <div className="dialog-actions modal-footer">
         <button onClick={close}>{t("Cancel")}</button>
         <button
+          data-shortcut-save
           className="primary"
           onClick={() =>
             void act(async () => {

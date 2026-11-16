@@ -1,0 +1,22 @@
+.overlay.detail-card-overlay:has(> .shortcuts-dialog) { z-index: 110; }
+.dialog.detail-card.shortcuts-dialog { width: min(680px, calc(100vw - 48px)); padding: 0; min-width: 0; max-height: calc(100vh - 48px); background: var(--panel); border: 1px solid var(--border); border-radius: 15px; }
+.shortcuts-heading { display: flex; align-items: center; justify-content: space-between; padding: 23px 26px 17px; flex-shrink: 0; }
+.shortcuts-heading h2 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 19px; font-weight: 500; letter-spacing: -.3px; color: var(--text); }
+.shortcuts-heading h2 > svg { color: var(--secondary); }
+.shortcuts-heading button { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: 5px; background: transparent; color: var(--faint); }
+.shortcuts-heading button:hover { background: var(--subtle); color: var(--text); }
+.shortcuts-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 30px; row-gap: 20px; padding: 0 26px 25px; overflow-y: auto; scrollbar-width: thin; }
+.shortcuts-group h3 { margin: 0 0 7px; padding-bottom: 7px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 500; color: var(--faint); }
+.shortcuts-group dl { margin: 0; }
+.shortcuts-group dl > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 29px; }
+.shortcuts-group dt { color: var(--secondary); font-size: 12px; font-weight: 400; }
+.shortcuts-group dd { display: flex; align-items: center; gap: 3px; margin: 0; flex-shrink: 0; }
+.shortcuts-group kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 21px; padding: 1px 5px; background: var(--subtle); border-radius: 4px; color: var(--secondary); font-size: 11px; line-height: 1.5; font-family: inherit; }
+.sidebar-utilities { display: flex; align-items: center; gap: 4px; }
+.sidebar-utilities .nav-item { flex: 1; min-width: 0; width: auto; }
+.sidebar-utilities .shortcuts-trigger { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--side-text); opacity: .75; }
+.sidebar-utilities .shortcuts-trigger:hover { opacity: 1; background: color-mix(in srgb, var(--side-text) 12%, transparent); }
+.settings-nav .settings-shortcuts-link { margin-top: 14px; }
+@media (max-width: 650px) { .shortcuts-groups { column-gap: 18px; padding-inline: 20px; } .shortcuts-heading { padding-inline: 20px; } }
+.shortcuts-editing { grid-column: 1 / -1; }
+.shortcuts-editing dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 30px; }
