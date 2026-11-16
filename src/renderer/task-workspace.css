@@ -1,0 +1,27 @@
+/* Task workspaces share a quiet, bounded reading column. */
+.task-workspace .workspace-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 30px; margin-bottom: 8px; }
+.task-workspace .workspace-filters { display: flex; gap: 8px; min-width: 0; }
+.task-workspace .workspace-filters select { width: auto; max-width: 190px; padding: 5px 24px 5px 8px; font-size: 12px; color: var(--secondary); background-color: transparent; border: 1px solid var(--border); border-radius: 6px; }
+.content.task-workspace .task-list:not(.calendar-list) { display: flex; flex-direction: column; gap: 24px; padding: 0; background: transparent; border: 0; border-radius: 0; }
+.task-workspace .workspace-group-heading { display: flex; align-items: center; gap: 7px; margin: 0 0 6px; padding: 0 10px 6px; font-size: 12px; font-weight: 500; color: var(--secondary); }
+.task-workspace .workspace-group-heading > span { width: 6px; height: 6px; border-radius: 50%; }
+.task-workspace .workspace-group-heading small { font-size: 11px; font-weight: 400; color: var(--faint); margin-left: 2px; }
+.task-workspace .is-overdue .workspace-group-heading { color: var(--danger, #be7058); }
+.content.task-workspace .task-list .task-row { display: flex; align-items: center; gap: 11px; min-height: 48px; margin: 0; padding: 10px; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-radius: 6px; background: transparent; box-shadow: none; }
+.content.task-workspace .task-list .task-row:last-child { border-bottom-color: transparent; }
+.content.task-workspace .task-list .task-row:hover { background: var(--subtle); }
+.content.task-workspace .task-list .task-row.selected { background: var(--tint); }
+.task-workspace .task-body { min-width: 0; flex: 1; }
+.task-workspace .task-list .task-title { font-size: 14px; line-height: 1.5; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
+.task-workspace .task-list .task-meta { display: flex; flex-wrap: wrap; gap: 5px 8px; margin-top: 4px; font-size: 10px; color: var(--faint); }
+.task-workspace .task-list .task-meta:empty { display: none; }
+.task-workspace .task-meta .tag { font-size: 10px; line-height: 17px; padding: 0 5px; border-radius: 4px; background: var(--subtle); color: var(--secondary); }
+.task-workspace .task-row:hover .tag { background: var(--panel); }
+.task-workspace .task-list .task-date { flex: 0 0 auto; max-width: 150px; margin-left: 12px; font-size: 11px; color: var(--faint); }
+.task-workspace .task-list .task-date.overdue { color: var(--danger, #be7058); }
+.task-workspace .task-list .check-button { width: 16px; height: 16px; flex-basis: 16px; }
+.task-workspace .task-list .empty { padding: 60px 20px; }
+.task-workspace .empty-art { transform: scale(.8); margin-bottom: 12px; }
+.task-workspace .empty h3 { font-size: 17px; }
+.task-workspace .empty p { font-size: 12px; }
+@media(max-width: 850px) { .task-workspace .task-list .task-date { max-width: 115px; margin-left: 0; white-space: normal; text-align: right; } }

@@ -23,6 +23,8 @@ import type { Task } from "../shared/types";
 import type { Memo, MemoAttachment } from "../shared/memo";
 import DetailCardModal from "./DetailCardModal";
 import "./memo.css";
+import TimelineFilters from "./TimelineFilters";
+import { defaultTimelineFilters, readTimelineFilters, matchesTimelineFilters } from "../shared/timeline-filters";
 
 const invoke = <T,>(method: string, ...args: unknown[]) =>
   window.telldo.invoke<T>(method, ...args);
@@ -59,7 +61,6 @@ function taskSuggestionAction(memo: Memo, isZh: boolean) {
       ? "查看详情"
       : "View details";
 }
-type Filter = "all" | "tasks" | "text" | "image" | "file";
 export interface MemoListOption {
   id: string;
   name: string;
@@ -428,9 +429,14 @@ export default function MemoPage({
   const t = (zh: string, en: string) => (isZh ? zh : en);
   const [memos, setMemos] = useState<Memo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [scope, setScope] = useState<"review" | "all">("review");
-  const [filter, setFilter] = useState<Filter>("all");
-  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState(() => {
+    try { return readTimelineFilters(localStorage.getItem("telldo.timeline.filters.v1"), zone); }
+    catch { return defaultTimelineFilters(zone); }
+  });
+  const scope = filters.scope, search = filters.search;
+  const setScope = (scope: "review" | "all") => setFilters(old => ({...old, scope}));
+  const setSearch = (search: string) => setFilters(old => ({...old, search}));
+  useEffect(() => { try { localStorage.setItem("telldo.timeline.filters.v1", JSON.stringify(filters)); } catch {} }, [filters]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -467,11 +473,6 @@ export default function MemoPage({
   }, [notice]);
   const taskRecords = scope === "review" ? completedTasks : allTasks;
   const activeTaskIds = new Set(allTasks.map(task => task.id));
-  const originalSavedAt = new Map<string, string>();
-  for (const memo of memos) for (const taskId of memo.task_ids || []) {
-    const previous = originalSavedAt.get(taskId);
-    if (!previous || memo.created_at < previous) originalSavedAt.set(taskId, memo.created_at);
-  }
   const records: TimelineEntry[] = [
     ...memos
       .filter(
@@ -491,38 +492,23 @@ export default function MemoPage({
     ...taskRecords.map((task) => ({
       kind: "task" as const,
       id: `${task.id}:${task.completed_at || task.created_at}`,
-      at: originalSavedAt.has(task.id) && originalSavedAt.get(task.id)! < task.created_at
-        ? originalSavedAt.get(task.id)! : task.created_at,
+      at: task.status === "done" ? task.completed_at || task.created_at : task.created_at,
       task,
       attachments: taskAttachments[task.id] || [],
     })),
   ];
   const query = search.toLocaleLowerCase().trim();
-  const filtered = records
-    .filter((record) => {
-      if (filter === "tasks" && record.kind !== "task") return false;
-      if (
-        filter === "text" &&
-        (record.kind !== "memo" || record.attachments.length)
-      )
-        return false;
-      if (
-        (filter === "image" || filter === "file") &&
-        !record.attachments.some((file) => file.kind === filter)
-      )
-        return false;
-      const content =
-        record.kind === "memo"
-          ? `${record.memo.title} ${record.memo.body} ${record.memo.summary} ${record.memo.extracted_text}`
-          : `${record.task.title} ${record.task.notes} ${record.task.tags.join(" ")} ${lists.find((list) => list.id === record.task.list_id)?.name || ""}`;
-      return (
-        !query ||
-        `${content} ${record.attachments.map((file) => file.name).join(" ")}`
-          .toLocaleLowerCase()
-          .includes(query)
-      );
-    })
-    .sort((a, b) => b.at.localeCompare(a.at));
+  const hasFilters = !!(query || filters.lists.length || filters.kinds.length || filters.attachments.length || filters.period !== "all");
+  const filtered = records.filter(record => {
+    const listIds = record.kind === "task" ? [record.task.list_id] : [...new Set([
+      ...(record.memo.list_id ? [record.memo.list_id] : []),
+      ...(record.memo.task_ids || []).flatMap(id => { const task = allTasks.find(t => t.id === id); return task ? [task.list_id] : []; }),
+    ])];
+    const content = record.kind === "memo"
+      ? `${record.memo.title} ${record.memo.body} ${record.memo.summary} ${record.memo.extracted_text} ${lists.filter(l=>listIds.includes(l.id)).map(l=>l.name).join(" ")}`
+      : `${record.task.title} ${record.task.notes} ${record.task.tags.join(" ")} ${lists.find(l=>l.id===record.task.list_id)?.name || ""}`;
+    return matchesTimelineFilters({ ...record, listIds, content }, filters, zone);
+  }).sort((a,b) => DateTime.fromISO(b.at).toMillis() - DateTime.fromISO(a.at).toMillis() || a.id.localeCompare(b.id));
   const grouped = new Map<string, TimelineEntry[]>();
   for (const record of filtered) {
     const date = DateTime.fromISO(record.at).setZone(zone).toISODate() || "";
@@ -608,6 +594,7 @@ export default function MemoPage({
       aria-label={t("时间线", "Timeline")}
     >
       <div className="memo-workspace">
+        <div className="timeline-top-line">
         <div
           className="timeline-scope"
           role="group"
@@ -626,40 +613,6 @@ export default function MemoPage({
             {t("全部记录", "All records")}
           </button>
         </div>
-        {error && (
-          <div className="memo-page-error memo-error" role="alert">
-            <span>{error}</span>
-            <button
-              onClick={() => setError("")}
-              aria-label={t("关闭", "Dismiss")}
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
-        <div className="memo-collection-bar">
-          <div
-            className="memo-filters"
-            aria-label={t("内容类型", "Content type")}
-          >
-            {(
-              [
-                ["all", t("全部", "All")],
-                ["tasks", t("待办", "Tasks")],
-                ["text", t("文字", "Text")],
-                ["image", t("图片", "Images")],
-                ["file", t("文件", "Files")],
-              ] as [Filter, string][]
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                aria-pressed={filter === value}
-                onClick={() => setFilter(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
           <label className="memo-search">
             <Search size={14} />
             <input
@@ -682,6 +635,18 @@ export default function MemoPage({
             )}
           </label>
         </div>
+        {error && (
+          <div className="memo-page-error memo-error" role="alert">
+            <span>{error}</span>
+            <button
+              onClick={() => setError("")}
+              aria-label={t("关闭", "Dismiss")}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        <TimelineFilters value={filters} change={setFilters} lists={lists} isZh={isZh} zone={zone} count={filtered.length} />
         {loading ? (
           <div className="memo-loading">
             <LoaderCircle className="spin" size={19} />
@@ -689,19 +654,19 @@ export default function MemoPage({
         ) : !filtered.length ? (
           <div className="memo-empty">
             <div className="memo-empty-symbol">
-              {filter === "tasks" ? (
+              {filters.kinds.length === 1 && filters.kinds[0] === "task" ? (
                 <CheckCheck size={24} strokeWidth={1.4} />
               ) : (
                 <NotebookPen size={24} strokeWidth={1.4} />
               )}
             </div>
             <h2>
-              {query || filter !== "all"
+              {hasFilters
                 ? t("还没找到这条记录", "Nothing found just yet")
                 : t("完成的事，都留在这里。", "A place for what you've done.")}
             </h2>
             <p>
-              {query || filter !== "all"
+              {hasFilters
                 ? t(
                     "试试其他关键词，或查看全部内容。",
                     "Try another search, or look through everything.",
@@ -711,11 +676,10 @@ export default function MemoPage({
                     "A task completed. A thought or an image kept.\nFind them here when you want to look back.",
                   )}
             </p>
-            {query || filter !== "all" ? (
+            {hasFilters ? (
               <button
                 onClick={() => {
-                  setSearch("");
-                  setFilter("all");
+                  setFilters({...defaultTimelineFilters(zone), scope});
                 }}
               >
                 {t("查看全部", "View all")}

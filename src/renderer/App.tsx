@@ -1,8 +1,10 @@
+import "./task-workspace.css";
 import ShortcutsDialog, { ShortcutsReference } from "./ShortcutsDialog";
 import { matchShortcut, shortcutLabel, type ShortcutId } from "../shared/shortcuts";
 import TaskTags from "./TaskTags";
 import { projectTaskRows } from "../shared/task-rows";
 import TaskTiming from "./TaskTiming";
+import type { RepeatValue } from "./RepeatSettings";
 import NotificationSettings from "./NotificationSettings";
 import { LIST_COLORS, nextListColor } from "../shared/list-colors";
 import DetailSelect from "./DetailSelect";
@@ -408,6 +410,9 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const shortcutHandler = useRef<(id: ShortcutId) => boolean>(() => false);
   const quickTaskInput = useRef<HTMLInputElement>(null);
+  const [taskTag, setTaskTag] = useState("");
+  const [taskSort, setTaskSort] = useState("date");
+  useEffect(() => { setTaskTag(""); setTaskSort("date"); }, [view]);
   const mac = window.telldo.platform === "darwin";
   const keyHint = (id: ShortcutId) => shortcutLabel(id, mac);
   function resetChatDraft() {
@@ -598,6 +603,21 @@ export default function App() {
     currentList = lists.find((l) => l.id === view),
     pending = data?.proposals.filter((p) => p.status === "pending") || [],
     proposal = data?.proposals.find((p) => p.id === proposalId);
+  const workspaceRows = rows.filter(({ task }) => !taskTag || task.tags.includes(taskTag)).sort((a, b) => {
+    if (taskSort === "title") return a.task.title.localeCompare(b.task.title, isZh ? "zh-CN" : "en");
+    if (taskSort === "priority") return { high: 0, medium: 1, low: 2, none: 3 }[a.task.priority] - { high: 0, medium: 1, low: 2, none: 3 }[b.task.priority];
+    return 0;
+  });
+  const activeRows = workspaceRows.filter(({ task }) => task.status !== "done");
+  const completedRows = workspaceRows.filter(({ task }) => task.status === "done");
+  const taskGroups = search || currentList
+    ? [{ id: "tasks", title: "", rows: activeRows }]
+    : view === "today"
+      ? [{ id: "overdue", title: isZh ? "逾期" : "Overdue", rows: activeRows.filter(({ task }) => isOverdue(task, zone)) },
+         { id: "today", title: t("Today"), rows: activeRows.filter(({ task }) => !isOverdue(task, zone)) }]
+      : lists.map(list => ({ id: list.id, title: list.name, color: list.color, rows: activeRows.filter(({ task }) => task.list_id === list.id) }));
+  const visibleGroups = [...taskGroups.filter(group => group.rows.length), ...(showDone && completedRows.length ? [{ id: "completed", title: isZh ? "已完成" : "Completed", rows: completedRows }] : [])];
+  const availableTags = [...new Set(rows.flatMap(({ task }) => task.tags))].sort((a, b) => a.localeCompare(b));
   async function addTask() {
     if (!newTask.trim() || !lists.length) return;
     await act(async () => {
@@ -1291,7 +1311,7 @@ export default function App() {
           />
         </div>
         {!isConversation && !isMemoView && (
-          <div className="content">
+          <div className={`content ${view !== "planned" || search ? "task-workspace" : ""}`}>
             <div className="view-heading">
               <div className="eyebrow">
                 {new Intl.DateTimeFormat(isZh ? "zh-CN" : "en", {
@@ -1430,7 +1450,7 @@ export default function App() {
                 <div className="task-toolbar">
                   <span>
                     {t("To do")}
-                    <span className="count-pill">{rows.length}</span>
+                    <span className="count-pill">{rows.filter(({ task }) => task.status !== "done").length}</span>
                   </span>
                   <button onClick={() => setShowDone(!showDone)}>
                     {t(showDone ? "Hide completed" : "Show completed")}
@@ -1459,9 +1479,24 @@ export default function App() {
                     <span>↵</span>
                   </button>
                 </div>
+                {currentList && <div className="workspace-tools">
+                  <div className="workspace-filters">
+                    {currentList && availableTags.length > 0 && <select aria-label={isZh ? "筛选标签" : "Filter tags"} value={taskTag} onChange={e => setTaskTag(e.target.value)}>
+                      <option value="">{isZh ? "全部标签" : "All tags"}</option>
+                      {availableTags.map(tag => <option key={tag} value={tag}>#{tag}</option>)}
+                    </select>}
+                    {currentList && <select aria-label={isZh ? "任务排序" : "Sort tasks"} value={taskSort} onChange={e => setTaskSort(e.target.value)}>
+                      <option value="date">{isZh ? "按日期" : "By date"}</option>
+                      <option value="priority">{isZh ? "按优先级" : "By priority"}</option>
+                      <option value="title">{isZh ? "按名称" : "By name"}</option>
+                    </select>}
+                  </div>
+                </div>}
                 <div className="task-list">
-                  {rows.length ? (
-                    rows.map(({ task: item, occurrence, template }) => (
+                  {visibleGroups.length ? (
+                    visibleGroups.map(group => <section className={`workspace-group ${group.id === "overdue" ? "is-overdue" : ""}`} key={group.id}>
+                      {group.title && <h2 className="workspace-group-heading">{"color" in group && <span style={{ background: String(group.color) }} />} {group.title}<small>{group.rows.length}</small></h2>}
+                      {group.rows.map(({ task: item, occurrence, template }) => (
                       <div
                         key={item.id + (occurrence?.occurrence_key || "")}
                         className={`task-row ${selected === item.id ? "selected" : ""} ${item.status === "done" ? "completed" : ""}`}
@@ -1508,7 +1543,7 @@ export default function App() {
                             {occurrence && <Repeat2 size={13} />}
                           </span>
                           <span className="task-meta">
-                            {!currentList && (
+                            {!currentList && view !== "anytime" && (
                               <span>
                                 {lists.find((l) => l.id === item.list_id)?.name}
                               </span>
@@ -1551,7 +1586,7 @@ export default function App() {
                         </span>
                         <span className={`priority-dot ${item.priority}`} />
                       </div>
-                    ))
+                    ))}</section>)
                   ) : (
                     <div className="empty">
                       <div className="empty-art">
@@ -1564,8 +1599,8 @@ export default function App() {
                         <span className="orbit one" />
                         <span className="orbit two" />
                       </div>
-                      <h3>{t("All done for now")}</h3>
-                      <p>{t("A little space for your next idea.")}</p>
+                      <h3>{taskTag ? (isZh ? "没有匹配的任务" : "No matching tasks") : t("All done for now")}</h3>
+                      <p>{taskTag ? <button onClick={() => setTaskTag("")}>{isZh ? "清除标签筛选" : "Clear tag filter"}</button> : t("A little space for your next idea.")}</p>
                     </div>
                   )}
                 </div>
@@ -1772,40 +1807,12 @@ function TaskDetail({
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<TaskPatch>({ ...task }),
     [sub, setSub] = useState(""),
-    [repeat, setRepeat] = useState(""),
-    [byday, setByday] = useState("MO"),
-    [monthday, setMonthday] = useState("31"),
-    [position, setPosition] = useState("1"),
-    [until, setUntil] = useState(""),
-    [count, setCount] = useState(""),
     [occurrenceLimit, setOccurrenceLimit] = useState(12);
   const series = data.recurrences.find((r) => r.task_id === task.id),
     set = (key: keyof TaskPatch, value: unknown) =>
       setDraft((d) => ({ ...d, [key]: value }));
-  useEffect(() => {
-    if (!series) return;
-    const rule = Object.fromEntries(
-      series.rrule.split(";").map((x) => x.split("=")),
-    );
-    setRepeat(
-      rule.FREQ === "DAILY"
-        ? "daily"
-        : rule.FREQ === "WEEKLY"
-          ? rule.BYDAY === "MO,TU,WE,TH,FR"
-            ? "weekdays"
-            : "weekly"
-          : rule.BYDAY
-            ? "monthlyWeekday"
-            : "monthly",
-    );
-    setByday((rule.BYDAY || "MO").replace(/^-?\d/, ""));
-    setPosition(rule.BYSETPOS || rule.BYDAY?.match(/^(-?\d)/)?.[1] || "1");
-    setMonthday(
-      rule.BYMONTHDAY || String(DateTime.fromISO(series.dtstart).day),
-    );
-    setUntil(series.until || "");
-    setCount(series.count ? String(series.count) : "");
-  }, [series?.rrule, series?.until, series?.count]);
+  const initialRepeat = series ? { rrule: series.rrule, until: series.until, count: series.count } : null;
+  const [repeatDraft, setRepeatDraft] = useState<RepeatValue | null>(initialRepeat);
   const visibleOccurrences = data.occurrences.filter(
     (o) => o.series_id === series?.id,
   );
@@ -1824,14 +1831,15 @@ function TaskDetail({
         "reminder_at",
       ] as const
     ).some((key) => (draft[key] || "") !== (task[key] || "")) ||
-    JSON.stringify(draft.tags || []) !== JSON.stringify(task.tags);
+    JSON.stringify(draft.tags || []) !== JSON.stringify(task.tags) ||
+    JSON.stringify(repeatDraft) !== JSON.stringify(initialRepeat);
   const save = () =>
     act(async () => {
       setSaveError("");
       setSaving(true);
       try {
         await api(
-          series ? "updateRecurring" : "updateTask",
+          "saveTaskSchedule",
           task.id,
           task.version,
           {
@@ -1852,23 +1860,14 @@ function TaskDetail({
                 },
             tags: draft.tags || [],
           },
-          ...(series
-            ? [
-                {
-                  rrule: series.rrule,
-                  dtstart:
-                    draft.due_kind === "datetime"
-                      ? DateTime.fromISO(draft.due_at!)
-                          .setZone(draft.time_zone || zone)
-                          .toFormat("yyyy-MM-dd'T'HH:mm:ss")
-                      : draft.due_date,
-                  tzid: draft.time_zone || series.tzid,
-                  until: series.until,
-                  count: series.count,
-                  exdates: series.exdates,
-                },
-              ]
-            : []),
+          repeatDraft ? {
+            ...repeatDraft,
+            dtstart: draft.due_kind === "datetime"
+              ? DateTime.fromISO(draft.due_at!).setZone(draft.time_zone || zone).toFormat("yyyy-MM-dd'T'HH:mm:ss")
+              : draft.due_date || draft.planned_date,
+            tzid: draft.time_zone || series?.tzid || zone,
+            exdates: series?.exdates || [],
+          } : null,
         );
         close();
       } catch (error) {
@@ -1878,35 +1877,6 @@ function TaskDetail({
         setSaving(false);
       }
     }, "Saved");
-  async function setRecurring() {
-    let rule =
-      repeat === "daily"
-        ? "FREQ=DAILY"
-        : repeat === "weekdays"
-          ? "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
-          : repeat === "weekly"
-            ? `FREQ=WEEKLY;BYDAY=${byday}`
-            : repeat === "monthly"
-              ? `FREQ=MONTHLY;BYMONTHDAY=${monthday}`
-              : `FREQ=MONTHLY;BYDAY=${position}${byday}`;
-    await act(
-      () =>
-        api("setRecurrence", task.id, {
-          rrule: rule,
-          dtstart:
-            draft.due_kind === "datetime"
-              ? DateTime.fromISO(draft.due_at!)
-                  .setZone(draft.time_zone || zone)
-                  .toFormat("yyyy-MM-dd'T'HH:mm:ss")
-              : draft.due_date || localDay(zone),
-          tzid: draft.time_zone || zone,
-          until: until || null,
-          count: count ? Number(count) : null,
-          exdates: [],
-        }),
-      "Saved",
-    );
-  }
   return (
     <DetailCardModal
       className="detail task-detail-card"
@@ -2000,8 +1970,67 @@ function TaskDetail({
             )}
           </p>
         )}
-        <TaskTiming value={draft} zone={series?.tzid || zone} isZh={t("General") === "通用"} requireDate={!!series}
-          onChange={patch => setDraft(previous => ({ ...previous, ...patch }))} />
+        <TaskTiming value={draft} zone={series?.tzid || zone} isZh={t("General") === "通用"} requireDate={!!repeatDraft}
+          recurrence={task.parent_id ? undefined : repeatDraft}
+          recurrenceExtra={series ? <details className="timing-occurrences"><summary>{t("Upcoming occurrences")}</summary>
+              {series && (
+                <>
+
+                  {visibleOccurrences.slice(0, occurrenceLimit).map((o) => (
+                    <div className="occurrence" key={o.occurrence_key}>
+                      <input
+                        aria-label={t("Reschedule instance")}
+                        type="date"
+                        value={
+                          taskFromOccurrence(task, o, series.tzid).due_date ||
+                          o.due_date
+                        }
+                        onChange={(e) =>
+                          void act(() =>
+                            api(
+                              "updateOccurrence",
+                              o.series_id,
+                              o.occurrence_key,
+                              { override_date: e.target.value },
+                              o.version ?? 1,
+                            ),
+                          )
+                        }
+                      />
+                      <select
+                        aria-label="Occurrence status"
+                        value={o.status}
+                        onChange={(e) =>
+                          void act(() =>
+                            api(
+                              "updateOccurrence",
+                              o.series_id,
+                              o.occurrence_key,
+                              { status: e.target.value },
+                              o.version ?? 1,
+                            ),
+                          )
+                        }
+                      >
+                        <option value="todo">{t("To do")}</option>
+                        <option value="done">{t("Done")}</option>
+                        <option value="skipped">{t("Skip")}</option>
+                      </select>
+                    </div>
+                  ))}
+                  {visibleOccurrences.length > occurrenceLimit && (
+                    <button
+                      className="secondary full"
+                      onClick={() => setOccurrenceLimit((n) => n + 24)}
+                    >
+                      {t("Show more occurrences")} (
+                      {visibleOccurrences.length - occurrenceLimit})
+                    </button>
+                  )}
+                </>
+              )}
+          </details> : undefined}
+          onChange={(patch, recurrence) => { setDraft(previous => ({ ...previous, ...patch })); if (recurrence !== undefined) setRepeatDraft(recurrence); }} />
         <TaskTags value={draft.tags || []} suggestions={data.tasks.flatMap(item => item.tags)}
           isZh={t("General") === "通用"} onChange={tags => set("tags", tags)} />
         {!task.parent_id && (
@@ -2102,178 +2131,6 @@ function TaskDetail({
                       <Plus size={16} />
                     </button>
                   </div>
-                </>
-              )}
-            </div>
-          </details>
-        )}
-        {!task.parent_id && (
-          <details className="task-card-disclosure">
-            <summary>
-              <Repeat2 size={16} />
-              <span>{t("Repeat")}</span>
-              <span className="task-card-summary">
-                {series ? t("Recurring template") : t("Does not repeat")}
-              </span>
-              <ChevronDown size={15} />
-            </summary>
-            <div className="task-card-disclosure-body">
-              {series && (
-                <>
-                  <button
-                    className="text-button"
-                    onClick={() =>
-                      void act(() => api("removeRecurrence", task.id))
-                    }
-                  >
-                    {t("Remove repeat")}
-                  </button>
-                </>
-              )}
-              <select
-                value={repeat}
-                onChange={(e) => setRepeat(e.target.value)}
-              >
-                {[
-                  ["", "Does not repeat"],
-                  ["daily", "Daily"],
-                  ["weekdays", "Weekdays"],
-                  ["weekly", "Weekly"],
-                  ["monthly", "Monthly"],
-                  ["monthlyWeekday", "Monthly weekday"],
-                ].map(([v, l]) => (
-                  <option value={v} key={v}>
-                    {t(l)}
-                  </option>
-                ))}
-              </select>
-              {repeat && (
-                <>
-                  {(repeat === "weekly" || repeat === "monthlyWeekday") && (
-                    <label>
-                      {t("Weekday")}
-                      <input
-                        value={byday}
-                        onChange={(e) => setByday(e.target.value.toUpperCase())}
-                        placeholder={t("Use commas, e.g. MO,WE,FR")}
-                      />
-                    </label>
-                  )}
-                  {repeat === "monthly" && (
-                    <label>
-                      {t("Month day")}
-                      <input
-                        type="number"
-                        min={1}
-                        max={31}
-                        value={monthday}
-                        onChange={(e) => setMonthday(e.target.value)}
-                      />
-                    </label>
-                  )}
-                  {repeat === "monthlyWeekday" && (
-                    <label>
-                      {t("Week position")}
-                      <select
-                        value={position}
-                        onChange={(e) => setPosition(e.target.value)}
-                      >
-                        {["1", "2", "3", "4", "-1"].map((v) => (
-                          <option value={v} key={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  <div className="form-grid">
-                    <label>
-                      {t("Until")}
-                      <input
-                        type="date"
-                        value={until}
-                        onChange={(e) => {
-                          setUntil(e.target.value);
-                          setCount("");
-                        }}
-                      />
-                    </label>
-                    <label>
-                      {t("Count")}
-                      <input
-                        type="number"
-                        min="1"
-                        max="10000"
-                        value={count}
-                        onChange={(e) => {
-                          setCount(e.target.value);
-                          setUntil("");
-                        }}
-                      />
-                    </label>
-                  </div>
-                  <button
-                    className="secondary full"
-                    onClick={() => void setRecurring()}
-                  >
-                    {t("Set repeat")}
-                  </button>
-                </>
-              )}
-              {series && (
-                <>
-                  <h4>{t("Upcoming occurrences")}</h4>
-                  {visibleOccurrences.slice(0, occurrenceLimit).map((o) => (
-                    <div className="occurrence" key={o.occurrence_key}>
-                      <input
-                        aria-label={t("Reschedule instance")}
-                        type="date"
-                        value={
-                          taskFromOccurrence(task, o, series.tzid).due_date ||
-                          o.due_date
-                        }
-                        onChange={(e) =>
-                          void act(() =>
-                            api(
-                              "updateOccurrence",
-                              o.series_id,
-                              o.occurrence_key,
-                              { override_date: e.target.value },
-                              o.version ?? 1,
-                            ),
-                          )
-                        }
-                      />
-                      <select
-                        aria-label="Occurrence status"
-                        value={o.status}
-                        onChange={(e) =>
-                          void act(() =>
-                            api(
-                              "updateOccurrence",
-                              o.series_id,
-                              o.occurrence_key,
-                              { status: e.target.value },
-                              o.version ?? 1,
-                            ),
-                          )
-                        }
-                      >
-                        <option value="todo">{t("To do")}</option>
-                        <option value="done">{t("Done")}</option>
-                        <option value="skipped">{t("Skip")}</option>
-                      </select>
-                    </div>
-                  ))}
-                  {visibleOccurrences.length > occurrenceLimit && (
-                    <button
-                      className="secondary full"
-                      onClick={() => setOccurrenceLimit((n) => n + 24)}
-                    >
-                      {t("Show more occurrences")} (
-                      {visibleOccurrences.length - occurrenceLimit})
-                    </button>
-                  )}
                 </>
               )}
             </div>

@@ -475,6 +475,8 @@ async function dispatch(method: string, args: any[]) {
       return service.deleteTask(args[0], args[1]);
     case "parseDate":
       return parseNaturalDate(args[0], zone());
+    case "saveTaskSchedule":
+      return service.saveTaskSchedule(args[0], args[1], args[2], args[3]);
     case "updateRecurring":
       return service.updateRecurring(args[0], args[1], args[2], args[3]);
     case "setRecurrence": {

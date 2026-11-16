@@ -518,6 +518,19 @@ export class TaskService {
         : [],
     };
   }
+  // Save task fields and recurrence as one transaction, including conversion
+  // between a one-off task and a repeating series.
+  saveTaskSchedule(taskId: string, version: number, patch: TaskPatch, recurrence: unknown | null): Task {
+    return this.db.transaction(() => {
+      this.assertVersion(this.getTask(taskId), version);
+      const existing = this.schedules.listRecurrences().find(rule => rule.task_id === taskId);
+      if (existing && recurrence) return this.updateRecurring(taskId, version, patch, recurrence);
+      if (existing) this.schedules.removeRecurrence(taskId);
+      const task = this.updateTask(taskId, version, patch);
+      if (recurrence) this.schedules.setRecurrence(taskId, recurrence);
+      return task;
+    })();
+  }
   updateRecurring(
     taskId: string,
     version: number,

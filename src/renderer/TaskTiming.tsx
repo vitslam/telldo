@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { DateTime } from "luxon";
-import { CalendarDays, Bell, BellOff, ChevronDown, ChevronLeft, ChevronRight, X, Check, Clock3 } from "lucide-react";
+import { CalendarDays, Bell, BellOff, ChevronDown, ChevronLeft, ChevronRight, X, Check, Clock3, Repeat2 } from "lucide-react";
 import { moveTiming, readTiming, timingPatch, type TimingFields, type TimingSelection } from "../shared/task-timing";
 import { isTopmostOverlay } from "./DetailCardModal";
 import "./task-timing.css";
+import RepeatSettings, { repeatLabel, alignRepeatDate, type RepeatValue } from "./RepeatSettings";
 
 function reminderLabel(mode: TimingSelection["reminder"], isZh: boolean) {
   const labels = {
@@ -15,8 +16,9 @@ function reminderLabel(mode: TimingSelection["reminder"], isZh: boolean) {
   return labels[mode][isZh ? 0 : 1];
 }
 
-export default function TaskTiming({ value, zone, isZh, onChange, disabled = false, lockedKind = false, requireDate = false }: {
-  value: TimingFields; zone: string; isZh: boolean; onChange: (patch: TimingFields) => void | Promise<void>;
+export default function TaskTiming({ value, zone, isZh, onChange, disabled = false, lockedKind = false, requireDate = false, recurrence, recurrenceExtra }: {
+  value: TimingFields; zone: string; isZh: boolean; onChange: (patch: TimingFields, recurrence?: RepeatValue | null) => void | Promise<void>;
+  recurrence?: RepeatValue | null; recurrenceExtra?: ReactNode;
   disabled?: boolean; lockedKind?: boolean; requireDate?: boolean;
 }) {
   const t = (zh: string, en: string) => isZh ? zh : en;
@@ -34,7 +36,7 @@ export default function TaskTiming({ value, zone, isZh, onChange, disabled = fal
   ) + (current.time ? ` ${current.time}` : "") : t("添加时间", "Add a date");
   async function clearDate() {
     setClearing(true); setError("");
-    try { await onChange(timingPatch({ date: "", time: "", reminder: "none", custom: "" }, zone)); }
+    try { await onChange(timingPatch({ date: "", time: "", reminder: "none", custom: "" }, zone), recurrence); }
     catch (e) { setError(String(e).replace(/^Error: /, "")); }
     finally { setClearing(false); }
   }
@@ -45,18 +47,21 @@ export default function TaskTiming({ value, zone, isZh, onChange, disabled = fal
     </div>
     <span className="task-timing-separator">·</span>
     <button type="button" disabled={disabled || clearing} className={`task-timing-reminder ${current.reminder === "none" ? "is-muted" : ""}`} onClick={() => setOpen(true)}>{current.reminder === "none" ? <BellOff size={14} /> : <Bell size={14} />}<span>{reminderLabel(current.reminder, isZh)}</span></button>
+    {recurrence && <><span className="task-timing-separator">·</span><button type="button" disabled={disabled || clearing} className="task-timing-repeat" onClick={() => setOpen(true)}><Repeat2 size={14}/><span>{repeatLabel(recurrence, isZh)}</span></button></>}
     {error && <span className="timing-error" role="alert">{error}</span>}
-    {open && <TimingPicker initial={current} zone={zone} isZh={isZh} anchor={trigger.current} lockedKind={lockedKind} close={() => setOpen(false)} apply={async selection => { await onChange(timingPatch(selection, zone)); setOpen(false); }} />}
+    {open && <TimingPicker initial={current} recurrence={recurrence} recurrenceExtra={recurrenceExtra} zone={zone} isZh={isZh} anchor={trigger.current} lockedKind={lockedKind} close={() => setOpen(false)} apply={async (selection, repeat) => { await onChange(timingPatch(selection, zone), repeat); setOpen(false); }} />}
   </div>;
 }
 
-function TimingPicker({ initial, zone, isZh, anchor, lockedKind, close, apply }: {
+function TimingPicker({ initial, zone, isZh, anchor, lockedKind, close, apply, recurrence, recurrenceExtra }: {
   initial: TimingSelection; zone: string; isZh: boolean; anchor: HTMLElement | null;
-  lockedKind: boolean; close: () => void; apply: (selection: TimingSelection) => Promise<void>;
+  lockedKind: boolean; close: () => void; apply: (selection: TimingSelection, recurrence?: RepeatValue | null) => Promise<void>;
+  recurrence?: RepeatValue | null; recurrenceExtra?: ReactNode;
 }) {
   const t = (zh: string, en: string) => isZh ? zh : en;
   const today = DateTime.now().setZone(zone).startOf("day");
   const [selection, setSelection] = useState(initial);
+  const [repeat, setRepeat] = useState(recurrence);
   const [month, setMonth] = useState(() => DateTime.fromISO(initial.date || today.toISODate()!, { zone }).startOf("month"));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -67,18 +72,20 @@ function TimingPicker({ initial, zone, isZh, anchor, lockedKind, close, apply }:
   const reminderTouched = useRef(false), saving = useRef(false);
   const dismissRef = useRef<() => void>(() => {});
   function move(date: string, time = selection.time) {
-    setError(""); setSelection(old => moveTiming(old, date, time, zone, reminderTouched.current));
+    setError(""); setSelection(old => moveTiming(old, alignRepeatDate(repeat, date), time, zone, reminderTouched.current));
   }
   async function dismiss() {
     if (saving.current) return;
-    if (JSON.stringify(selection) === JSON.stringify(initial)) { close(); return; }
+    if (JSON.stringify(selection) === JSON.stringify(initial) && JSON.stringify(repeat) === JSON.stringify(recurrence)) { close(); return; }
     saving.current = true; setBusy(true); setError("");
     try {
       if (lockedKind && !!selection.time !== !!initial.time)
         throw Error(t("单次安排保持重复任务的时间类型，可在管理重复任务中调整。", "Change the time type in the recurring task settings."));
       // Commit one edit when leaving the picker, including Escape. This avoids
       // version races while adjusting a recurring occurrence's date and time.
-      await apply(selection);
+      if (repeat && !selection.date) throw Error(t("重复任务需要选择日期。", "Choose a date for the repeating task."));
+      if (repeat?.until && repeat.until < selection.date) throw Error(t("结束日期不能早于首次日期。", "End date must be on or after the first date."));
+      await apply(selection, repeat);
     } catch (e) { setError(String(e).replace(/^Error: /, "")); }
     finally { saving.current = false; setBusy(false); }
   }
@@ -96,7 +103,7 @@ function TimingPicker({ initial, zone, isZh, anchor, lockedKind, close, apply }:
       if (event.isComposing || !isTopmostOverlay(overlay.current)) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); dismissRef.current(); }
       if (event.key === "Tab" && panel.current) {
-        const items = Array.from(panel.current.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),[tabindex="0"]')).filter(el => el.getClientRects().length);
+        const items = Array.from(panel.current.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),summary,[tabindex="0"]')).filter(el => el.getClientRects().length);
         const first = items[0], last = items.at(-1);
         if (!first) return;
         if (event.shiftKey && (document.activeElement === first || !panel.current.contains(document.activeElement))) { event.preventDefault(); last?.focus(); }
@@ -120,6 +127,9 @@ function TimingPicker({ initial, zone, isZh, anchor, lockedKind, close, apply }:
           <button ref={reminderTrigger} type="button" className="timing-reminder-trigger" role="combobox" aria-label={t("提醒", "Reminder")} aria-haspopup="listbox" aria-expanded={reminderOpen} disabled={!selection.date} onClick={() => setReminderOpen(true)} onKeyDown={e => { if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); setReminderOpen(true); } }}>{selection.reminder === "none" ? <BellOff size={13} /> : <Bell size={13} />}<span>{reminderLabel(selection.reminder, isZh)}</span><ChevronDown size={11} /></button>
         </div>
         {selection.reminder === "custom" && <input className="timing-custom-reminder" type="datetime-local" aria-label={t("自定义提醒时间", "Custom reminder time")} value={selection.custom} onChange={e => { setError(""); setSelection(old => ({ ...old, custom: e.target.value })); }} />}
+        {recurrence !== undefined && <RepeatSettings value={repeat || null} date={selection.date || today.toISODate()!} isZh={isZh} onChange={value => { setError(""); setRepeat(value); if(value) { const date = alignRepeatDate(value, selection.date || today.toISODate()!); setSelection(old => moveTiming(old, date, old.time, zone, reminderTouched.current)); setMonth(DateTime.fromISO(date, {zone}).startOf("month")); } }} />}
+        {repeat && <p className="timing-repeat-start">{t("首次：", "Starts: ")}{selection.date}</p>}
+        {recurrenceExtra}
       </fieldset>
       {error && <p className="timing-error" role="alert">{error}</p>}
       {reminderOpen && <ReminderMenu anchor={reminderTrigger.current} value={selection.reminder} hasTime={!!selection.time} isZh={isZh} close={() => setReminderOpen(false)} choose={mode => { reminderTouched.current = true; setError(""); setSelection(old => ({ ...old, reminder: mode })); }} />}

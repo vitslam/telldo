@@ -42,6 +42,40 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
+describe("unified task schedule saving", () => {
+  it("creates, updates and removes repeat with task fields, preserving completed instances", () => {
+    const s = service(), schedules = new ScheduleService(s.db);
+    const list = s.createList("Work");
+    const original = s.createTask({ title: "Schedule", list_id: list.id });
+    const spec = { rrule: "FREQ=DAILY", dtstart: "2031-02-10", tzid: "Asia/Shanghai", count: 3, until: null, exdates: [] };
+    const created = s.saveTaskSchedule(original.id, original.version, { due_kind: "date", due_date: "2031-02-10", reminder_at: "2031-02-10T02:00:00.000Z" }, spec);
+    const series = schedules.listRecurrences()[0];
+    schedules.materializeRange("2031-02-01", "2031-03-01", "Asia/Shanghai");
+    const first = schedules.listOccurrences()[0];
+    schedules.updateOccurrence(series.id, first.occurrence_key, { status: "done" }, first.version ?? 1);
+    const updated = s.saveTaskSchedule(created.id, created.version, { title: "Edited" }, { ...spec, rrule: "FREQ=WEEKLY;BYDAY=MO,FR" });
+    expect(schedules.listRecurrences()[0].rrule).toBe("FREQ=WEEKLY;BYDAY=MO,FR");
+    expect(schedules.listOccurrences().find(o => o.occurrence_key === first.occurrence_key)?.status).toBe("done");
+    expect(updated.reminder_at).toBe(created.reminder_at);
+    s.saveTaskSchedule(updated.id, updated.version, { due_kind: "none", due_date: null, reminder_at: null }, null);
+    expect(schedules.listRecurrences()).toHaveLength(0);
+    expect(s.getTask(updated.id).due_kind).toBe("none");
+  });
+  it("rolls back invalid recurrence and failed removal edits, and rejects stale versions", () => {
+    const s = service(), schedules = new ScheduleService(s.db), list = s.createList("Work");
+    const task = s.createTask({ title: "Original", list_id: list.id });
+    const spec = { rrule: "FREQ=DAILY", dtstart: "2031-02-10", tzid: "UTC", count: 2, until: null, exdates: [] };
+    expect(() => s.saveTaskSchedule(task.id, task.version, { title: "Lost" }, spec)).toThrow();
+    expect(s.getTask(task.id)).toMatchObject({ title: "Original", version: task.version });
+    expect(schedules.listRecurrences()).toHaveLength(0);
+    const saved = s.saveTaskSchedule(task.id, task.version, { due_kind: "date", due_date: "2031-02-10" }, spec);
+    expect(() => s.saveTaskSchedule(task.id, saved.version, { title: "" }, null)).toThrow();
+    expect(schedules.listRecurrences()).toHaveLength(1);
+    expect(() => s.saveTaskSchedule(task.id, task.version, { title: "Stale" }, null)).toThrow();
+    expect(schedules.listRecurrences()).toHaveLength(1);
+  });
+});
+
 describe("manual task service without any Codex dependency", () => {
   it("restores older preferences with portable local transport defaults", () => {
     const s = service();
