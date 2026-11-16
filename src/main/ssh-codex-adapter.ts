@@ -159,7 +159,7 @@ function boundedContext(
           due_at: x.due_at,
           time_zone: x.time_zone,
           planned_date: x.planned_date,
-          tags: Array.isArray(x.tags) ? x.tags.slice(0, 10) : [],
+          tags: Array.isArray(x.tags) ? x.tags : [],
         }))
       : [],
   };

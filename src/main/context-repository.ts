@@ -228,7 +228,8 @@ export class ContextRepository {
         ...task,
         title: cut(task.title, 200),
         notes: cut(task.notes, 140),
-        tags: task.tags.slice(0, 2).map((tag) => cut(tag, 30)),
+        // Tags identify matching records; excerpts must not omit or rename them.
+        tags: task.tags,
       };
     });
   }

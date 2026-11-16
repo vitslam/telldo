@@ -37,6 +37,28 @@ function duplicateTasks(tasks: TaskService, sourceId: string, count: number) {
   })();
 }
 describe("bounded, read-only AI context queries", () => {
+  it("preserves every complete tag on search results, including the tag that matched", () => {
+    const { tasks, repo, list } = fixture();
+    const wanted = tasks.createTask({
+      title: "测试环境/正式环境分库分表",
+      list_id: list.id,
+      tags: ["Dataforge", "Labelx", "lens", "安全合规"],
+      notes: "n".repeat(2000),
+    });
+    tasks.createTask({ title: "Unrelated", list_id: list.id });
+    const result = repo.retrieve({ entity: "tasks", keywords: "安全合规", limit: 1 });
+    expect(result.queryResult).toMatchObject({ total: 1, returned: 1, hasMore: false });
+    expect(result.tasks![0].id).toBe(wanted.id);
+    expect(result.tasks![0].tags).toEqual(wanted.tags);
+    expect(result.tasks![0].tags).toContain("安全合规");
+    expect(result.tasks![0].notes.length).toBeLessThanOrEqual(141);
+
+    const allTags = Array.from({ length: 30 }, (_, i) => `${i}-` + "长标签".repeat(20));
+    const updated = tasks.updateTask(wanted.id, wanted.version, { tags: allTags });
+    const reread = repo.retrieve({ entity: "tasks", keywords: "分库分表", limit: 1 });
+    expect(new Set(reread.tasks![0].tags)).toEqual(new Set(updated.tags));
+    expect(reread.tasks![0].tags).toHaveLength(30);
+  });
   it("filters and pages in SQL despite thousands of unrelated records, without loading task lists", () => {
     const { tasks, memos, repo, list } = fixture();
     const noise = tasks.createTask({

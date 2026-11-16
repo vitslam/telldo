@@ -215,6 +215,12 @@ async function ready(options: Parameters<typeof harness>[0] = {}) {
 }
 
 describe("Codex adapter capability probing and process boundary", () => {
+  it("sends the full supported tag set without shortening tag names", async () => {
+    const { adapter, calls } = await ready();
+    const tags = Array.from({ length: 30 }, (_, i) => `${i}-` + "长标签".repeat(20));
+    await adapter.run("查看任务标签", { tasks: [{ id: "tagged", title: "Tagged", tags }] });
+    expect(calls.at(-1)!.input).toContain(JSON.stringify(tags));
+  });
   it("keeps manual mode possible when Codex is absent", async () => {
     const adapter = new CodexAdapter({ resolveExecutable: async () => null });
     expect(await adapter.probe()).toMatchObject({

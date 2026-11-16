@@ -12,11 +12,12 @@
 .shortcuts-group dt { color: var(--secondary); font-size: 12px; font-weight: 400; }
 .shortcuts-group dd { display: flex; align-items: center; gap: 3px; margin: 0; flex-shrink: 0; }
 .shortcuts-group kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 21px; padding: 1px 5px; background: var(--subtle); border-radius: 4px; color: var(--secondary); font-size: 11px; line-height: 1.5; font-family: inherit; }
-.sidebar-utilities { display: flex; align-items: center; gap: 4px; }
-.sidebar-utilities .nav-item { flex: 1; min-width: 0; width: auto; }
-.sidebar-utilities .shortcuts-trigger { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--side-text); opacity: .75; }
-.sidebar-utilities .shortcuts-trigger:hover { opacity: 1; background: color-mix(in srgb, var(--side-text) 12%, transparent); }
-.settings-nav .settings-shortcuts-link { margin-top: 14px; }
 @media (max-width: 650px) { .shortcuts-groups { column-gap: 18px; padding-inline: 20px; } .shortcuts-heading { padding-inline: 20px; } }
 .shortcuts-editing { grid-column: 1 / -1; }
 .shortcuts-editing dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 30px; }
+.settings-shortcuts-page .shortcuts-groups { padding: 0; overflow: visible; column-gap: 24px; row-gap: 16px; }
+.settings-shortcuts-page .shortcuts-editing dl { column-gap: 24px; }
+.settings-shortcuts-page { gap: 14px; }
+.settings-shortcuts-page .shortcuts-groups { row-gap: 10px; }
+.settings-shortcuts-page .shortcuts-group h3 { margin: 0 0 5px; padding-bottom: 6px; font-size: 11px; font-weight: 500; line-height: 16px; letter-spacing: 0; color: var(--faint); }
+.settings-shortcuts-page .shortcuts-group dl > div { min-height: 26px; }

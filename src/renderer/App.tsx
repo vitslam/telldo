@@ -1,4 +1,4 @@
-import ShortcutsDialog from "./ShortcutsDialog";
+import ShortcutsDialog, { ShortcutsReference } from "./ShortcutsDialog";
 import { matchShortcut, shortcutLabel, type ShortcutId } from "../shared/shortcuts";
 import TaskTags from "./TaskTags";
 import { projectTaskRows } from "../shared/task-rows";
@@ -1139,12 +1139,9 @@ export default function App() {
           ))}
         </div>
         <div className="sidebar-bottom">
-          <div className="sidebar-utilities">
-            <button className="nav-item" title={`${t("Settings")} · ${keyHint("settings")}`} onClick={() => setSettingsOpen(true)}>
-              <SettingsIcon size={18} />{t("Settings")}
-            </button>
-            <button className="shortcuts-trigger" aria-label={isZh ? "快捷键" : "Keyboard shortcuts"} title={`${isZh ? "快捷键" : "Keyboard shortcuts"} · ${keyHint("help")}`} onClick={() => setShortcutsOpen(true)}><Keyboard size={16} /></button>
-          </div>
+          <button className="nav-item" title={`${t("Settings")} · ${keyHint("settings")}`} onClick={() => setSettingsOpen(true)}>
+            <SettingsIcon size={18} />{t("Settings")}
+          </button>
         </div>
       </aside>
       <SidebarResizeHandle isZh={isZh} />
@@ -1610,7 +1607,6 @@ export default function App() {
       {historyOpen && <ChatHistoryDialog isZh={isZh} activeId={chatId} select={id => selectChat(id)} close={() => setHistoryOpen(false)} />}
       {settingsOpen && (
         <SettingsDialog
-          openShortcuts={() => setShortcutsOpen(true)}
           data={data}
           t={t}
           close={() => setSettingsOpen(false)}
@@ -2329,13 +2325,11 @@ function TaskDetail({
   );
 }
 function SettingsDialog({
-  openShortcuts,
   data,
   t,
   close,
   act,
 }: {
-  openShortcuts: () => void;
   data: Snapshot;
   t: (s: string) => string;
   close: () => void;
@@ -2369,6 +2363,7 @@ function SettingsDialog({
               ["notifications", "Notifications", Bell],
               ["ai", "AI connection", Sparkles],
               ["data", "Data management", Layers],
+              ["shortcuts", "Keyboard shortcuts", Keyboard],
             ] as const
           ).map(([id, label, Icon]) => (
             <button
@@ -2377,12 +2372,15 @@ function SettingsDialog({
               onClick={() => setSection(id)}
             >
               <Icon size={17} />
-              <span>{t(label)}</span>
+              <span>{label === "Keyboard shortcuts" ? (t("General") === "通用" ? "快捷键" : label) : t(label)}</span>
             </button>
           ))}
-          <button className="settings-shortcuts-link" onClick={openShortcuts}><Keyboard size={17} /><span>{t("General") === "通用" ? "快捷键" : "Keyboard shortcuts"}</span></button>
         </nav>
         <div className="settings-pages">
+          <div className="settings-page settings-shortcuts-page" hidden={section !== "shortcuts"}>
+            <h3>{t("General") === "通用" ? "快捷键" : "Keyboard shortcuts"}</h3>
+            <ShortcutsReference isZh={t("General") === "通用"} />
+          </div>
           <div className="settings-page" hidden={section !== "appearance"}>
             <section className="appearance-settings">
               <h3>{t("Appearance")}</h3>
