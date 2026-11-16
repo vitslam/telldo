@@ -982,12 +982,7 @@ export default function ChatPage({
               >
                 <Paperclip size={16} />
               </button>
-              {available ? (
-                <span className="composer-provider">
-                  <Sparkles size={13} />
-                  Codex
-                </span>
-              ) : (
+              {!available && (
                 <button
                   className="composer-connect"
                   onClick={settings}
@@ -1023,11 +1018,6 @@ export default function ChatPage({
               </label>
             </div>
             <div className="composer-send-controls">
-              <span className="composer-key-hint">
-                {busy
-                  ? text("可以继续起草", "Keep drafting")
-                  : text("⇧ ↵ 换行", "⇧ ↵ New line")}
-              </span>
               {busy ? (
                 <button
                   className="conversation-send stop"

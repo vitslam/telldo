@@ -1,3 +1,5 @@
+import TaskTiming from "./TaskTiming";
+import type { TimingFields } from "../shared/task-timing";
 import {
   useEffect,
   useMemo,
@@ -71,8 +73,9 @@ export default function PlannedView({
   openTemplate,
 }: Props) {
   const text = (zh: string, en: string) => (isZh ? zh : en);
+  // Start existing installs in month view once, then remember explicit choices.
   const [mode, setMode] = useState(() =>
-    saved("telldo.planned.mode", "list") === "month" ? "month" : "list",
+    saved("telldo.planned.view.v2", "month") === "list" ? "list" : "month",
   );
   const [listId, setListId] = useState(() => saved("telldo.planned.list", ""));
   const [selected, setSelected] = useState<string | null>(null),
@@ -127,7 +130,7 @@ export default function PlannedView({
     selectionProjection?.rows.find((r) => r.key === selected) ||
     selectionProjection?.unscheduled.find((r) => r.key === selected);
   useEffect(() => {
-    remember("telldo.planned.mode", mode);
+    remember("telldo.planned.view.v2", mode);
   }, [mode]);
   useEffect(() => {
     remember("telldo.planned.list", filter);
@@ -167,6 +170,7 @@ export default function PlannedView({
     field,
     date,
     displayZone: zone,
+    reminderPolicy: "follow",
   });
   async function apply(request: CalendarChangeRequest) {
     await run(async () => {
@@ -376,15 +380,20 @@ export default function PlannedView({
         zone={zone}
         isZh={isZh}
         disabled={working || previewBusy}
-        change={(field, date, wallTime) =>
-          void inspect({
-            ...requestFor(active, field, date),
-            ...(wallTime ? { wallTime } : {}),
-          })
-        }
-        moreSettings={
-          !active.occurrence ? () => openTemplate(active.task) : undefined
-        }
+        change={async patch => {
+          setWorking(true);
+          try {
+            if (active.occurrence) {
+              await api("updateOccurrence", active.occurrence.series_id, active.occurrence.occurrence_key, {
+                override_date: patch.due_date,
+                override_due_at: patch.due_at,
+                reminder_override: "explicit",
+                override_reminder_at: patch.reminder_at,
+              }, active.occurrence.version ?? 1);
+            } else await api("updateTask", active.task.id, active.task.version, patch);
+            await reload();
+          } finally { setWorking(false); }
+        }}
       />
       {!active.occurrence && (
         <button
@@ -1104,130 +1113,9 @@ export default function PlannedView({
     </section>
   );
 }
-function CalendarDates({
-  row,
-  zone,
-  isZh,
-  disabled,
-  change,
-  moreSettings,
-}: {
-  row: CalendarRow;
-  zone: string;
-  isZh: boolean;
-  disabled: boolean;
-  change: (
-    field: "planned" | "due",
-    date: string | null,
-    wallTime?: string,
-  ) => void;
-  moreSettings?: () => void;
+function CalendarDates({row,zone,isZh,disabled,change}: {
+  row:CalendarRow;zone:string;isZh:boolean;disabled:boolean;change:(patch:TimingFields)=>Promise<void>;
 }) {
-  const [planned, setPlanned] = useState(row.task.planned_date || ""),
-    [due, setDue] = useState(row.dueDate || "");
-  const originalTime = row.task.due_at
-    ? DateTime.fromISO(row.task.due_at).setZone(zone).toFormat("HH:mm")
-    : "";
-  const [wallTime, setWallTime] = useState(originalTime);
-  const text = (zh: string, en: string) => (isZh ? zh : en);
-  return (
-    <section className="calendar-date-editor">
-      {!row.occurrence && (
-        <div className="calendar-date-field">
-          <label>
-            {text("安排日期", "Planned date")}
-            <input
-              type="date"
-              aria-label={text("安排日期", "Planned date")}
-              disabled={disabled}
-              value={planned}
-              onChange={(e) => setPlanned(e.target.value)}
-            />
-          </label>
-          <button
-            className="text-button"
-            disabled={disabled || planned === (row.task.planned_date || "")}
-            onClick={() => change("planned", planned || null)}
-          >
-            {text("保存安排日期", "Save planned date")}
-          </button>
-        </div>
-      )}
-      <div className="calendar-date-field">
-        <div className="calendar-due-fields">
-          <label>
-            {row.occurrence
-              ? text("本次截止日期", "Occurrence due date")
-              : text("截止日期", "Due date")}
-            <input
-              type="date"
-              aria-label={text("截止日期", "Due date")}
-              disabled={disabled}
-              value={due}
-              onChange={(e) => setDue(e.target.value)}
-            />
-          </label>
-          {row.task.due_at && (
-            <label>
-              {text("截止时刻", "Due time")}
-              <input
-                type="time"
-                aria-label={text("截止时刻", "Due time")}
-                value={wallTime}
-                disabled={disabled}
-                onChange={(e) => setWallTime(e.target.value)}
-              />
-            </label>
-          )}
-        </div>
-        <button
-          className="text-button"
-          disabled={
-            disabled ||
-            (due === (row.dueDate || "") && wallTime === originalTime) ||
-            (!!row.occurrence && !due) ||
-            (!!originalTime && !wallTime)
-          }
-          onClick={() =>
-            change(
-              "due",
-              due || null,
-              wallTime !== originalTime ? wallTime || undefined : undefined,
-            )
-          }
-        >
-          {text("保存截止日期", "Save due date")}
-        </button>
-      </div>
-      {row.task.due_at && (
-        <p className="notice">
-          {DateTime.fromISO(row.task.due_at)
-            .setZone(zone)
-            .toFormat("HH:mm ZZZZ")}
-          {row.task.time_zone !== zone && (
-            <>
-              {" "}
-              · {text("原时区", "Original zone")}:{" "}
-              {DateTime.fromISO(row.task.due_at)
-                .setZone(row.task.time_zone || zone)
-                .toFormat("yyyy-MM-dd HH:mm ZZZZ")}
-            </>
-          )}
-        </p>
-      )}
-      {row.task.reminder_at && (
-        <p className="notice">
-          {text("提醒", "Reminder")}:{" "}
-          {DateTime.fromISO(row.task.reminder_at)
-            .setZone(zone)
-            .toFormat("yyyy-MM-dd HH:mm ZZZZ")}
-        </p>
-      )}
-      {moreSettings && (
-        <button className="text-button" onClick={moreSettings}>
-          {text("更多日期和提醒设置", "More date and reminder settings")}
-        </button>
-      )}
-    </section>
-  );
+  return <TaskTiming value={row.task} zone={row.series?.tzid || zone} isZh={isZh} disabled={disabled}
+    lockedKind={!!row.occurrence} onChange={change} />;
 }

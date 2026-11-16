@@ -1,3 +1,7 @@
+import TaskTags from "./TaskTags";
+import { projectTaskRows } from "../shared/task-rows";
+import TaskTiming from "./TaskTiming";
+import NotificationSettings from "./NotificationSettings";
 import { LIST_COLORS, nextListColor } from "../shared/list-colors";
 import DetailSelect from "./DetailSelect";
 import ImagePreview from "./ImagePreview";
@@ -32,7 +36,6 @@ import {
   ArrowUpRight,
   X,
   Check,
-  Hash,
   MoreHorizontal,
   ArrowRight,
   ListChecks,
@@ -63,6 +66,11 @@ import {
 } from "../shared/dates";
 
 const zh: Record<string, string> = {
+  Notifications: "通知",
+  "At the time": "到时提醒",
+  "10 min before": "提前 10 分钟",
+  "1 hour before": "提前 1 小时",
+  "No reminder": "不提醒",
   "Save changes first": "请先保存更改",
   "Show more": "展开全文",
   "Show less": "收起",
@@ -407,6 +415,25 @@ export default function App() {
     setHistoryOpen(false);
     requestAnimationFrame(() => speechInput.current?.focus());
   }
+  useEffect(() => window.telldo.onEvent(event => {
+    if (event.type !== "notification-open") return;
+    const target = event.data as { kind: string; id: string; listId?: string };
+    setSettingsOpen(false);
+    setHistoryOpen(false);
+    setSelectedMemoId(null);
+    if (target.kind === "task") {
+      setSearch("");
+      setView(target.listId || "today");
+      setSelected(target.id);
+      void reload().catch(e => setError(String(e)));
+    } else {
+      openConversation();
+      if (target.id !== chatId) void selectChat(target.id).catch(e => setError(String(e)));
+    }
+  }), [chatId, busy]);
+  useEffect(() => {
+    if (historyReady && data) void api("notificationReady").catch(() => {});
+  }, [historyReady, !!data]);
   const progressBuffer = useRef<ProgressBatcher | null>(null);
   if (!progressBuffer.current)
     progressBuffer.current = new ProgressBatcher((batch) => {
@@ -533,37 +560,10 @@ export default function App() {
   }, [toast]);
   const tasks = data?.tasks || [],
     lists = data?.lists || [];
-  const allRows = useMemo(() => {
-    const result: Row[] = [];
-    for (const task of tasks.filter((t) => !t.parent_id)) {
-      const series = data?.recurrences.find((r) => r.task_id === task.id);
-      if (series) {
-        const instances = data!.occurrences.filter(
-          (o) => o.series_id === series.id && o.status !== "skipped",
-        );
-        const ordered = [...instances].sort((a, b) =>
-          (a.override_date || a.due_date).localeCompare(
-            b.override_date || b.due_date,
-          ),
-        );
-        const occurrence =
-          ordered.find(
-            (o) =>
-              o.status === "todo" &&
-              (o.override_date || o.due_date) === localDay(zone),
-          ) ||
-          ordered.find((o) => o.status === "todo") ||
-          ordered.at(-1);
-        if (occurrence)
-          result.push({
-            task: taskFromOccurrence(task, occurrence, series.tzid),
-            occurrence,
-          });
-        else result.push({ task, template: true });
-      } else result.push({ task });
-    }
-    return result;
-  }, [data, zone]);
+  const allRows = useMemo(
+    () => data ? projectTaskRows(data, zone) : [],
+    [data, zone],
+  );
   const rows = useMemo(
     () =>
       (search
@@ -876,6 +876,7 @@ export default function App() {
         continuation?.id,
         {
           captureId,
+          chatId,
           references: continuation
             ? undefined
             : sendingReferences.map(({ kind, id, asTask }) => ({ kind, id, ...(asTask ? { asTask: true } : {}) })),
@@ -1037,10 +1038,10 @@ export default function App() {
                 {id !== "assistant" && id !== "memos" && (
                   <small>
                     {id === "planned"
-                      ? tasks.filter((task) =>
-                          !task.parent_id && task.status === "todo" &&
+                      ? allRows.filter(({ task }) =>
+                          task.status === "todo" &&
                           (task.due_kind !== "none" || !!task.planned_date ||
-                            data?.recurrences.some((series) => series.task_id === task.id)),
+                            data.recurrences.some(series => series.task_id === task.id)),
                         ).length
                       : allRows.filter(({ task: a, template }) =>
                           !template && taskInView(a, String(id), zone),
@@ -1075,12 +1076,7 @@ export default function App() {
               <span>{list.name}</span>
               <small>
                 {
-                  tasks.filter(
-                    (t) =>
-                      !t.parent_id &&
-                      t.list_id === list.id &&
-                      t.status === "todo",
-                  ).length
+                  allRows.filter(({ task }) => taskInView(task, list.id, zone)).length
                 }
               </small>
             </button>
@@ -1356,7 +1352,6 @@ export default function App() {
                       t={t}
                       close={close}
                       act={act}
-                      calendarDates={dates}
                       selectTask={(id) => {
                         setView(item.list_id);
                         setSelected(id);
@@ -1698,7 +1693,6 @@ function TaskDetail({
   act,
   requestDelete,
   selectTask,
-  calendarDates,
   onAttach,
   onAsk,
 }: {
@@ -1710,7 +1704,6 @@ function TaskDetail({
   act: (f: () => Promise<unknown>, m?: string) => Promise<void>;
   requestDelete: () => void;
   selectTask: (id: string) => void;
-  calendarDates?: ReactNode;
   onAttach?: (task: Task, files: File[]) => void;
   onAsk?: (task: Task) => void;
 }) {
@@ -1719,7 +1712,6 @@ function TaskDetail({
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<TaskPatch>({ ...task }),
-    [natural, setNatural] = useState(""),
     [sub, setSub] = useState(""),
     [repeat, setRepeat] = useState(""),
     [byday, setByday] = useState("MO"),
@@ -1728,7 +1720,6 @@ function TaskDetail({
     [until, setUntil] = useState(""),
     [count, setCount] = useState(""),
     [occurrenceLimit, setOccurrenceLimit] = useState(12);
-  const [tagText, setTagText] = useState(task.tags.join(", "));
   const series = data.recurrences.find((r) => r.task_id === task.id),
     set = (key: keyof TaskPatch, value: unknown) =>
       setDraft((d) => ({ ...d, [key]: value }));
@@ -1774,7 +1765,7 @@ function TaskDetail({
         "reminder_at",
       ] as const
     ).some((key) => (draft[key] || "") !== (task[key] || "")) ||
-    tagText !== task.tags.join(", ");
+    JSON.stringify(draft.tags || []) !== JSON.stringify(task.tags);
   const save = () =>
     act(async () => {
       setSaveError("");
@@ -1789,8 +1780,7 @@ function TaskDetail({
             notes: draft.notes,
             list_id: draft.list_id,
             priority: draft.priority,
-            ...(!calendarDates
-              ? {
+            ...{
                   due_kind: draft.due_kind,
                   due_date: draft.due_kind === "none" ? null : draft.due_date,
                   due_at: draft.due_kind === "datetime" ? draft.due_at : null,
@@ -1800,12 +1790,8 @@ function TaskDetail({
                       : null,
                   planned_date: draft.planned_date || null,
                   reminder_at: draft.reminder_at || null,
-                }
-              : {}),
-            tags: tagText
-              .split(/[,，]/)
-              .map((s) => s.trim())
-              .filter(Boolean),
+                },
+            tags: draft.tags || [],
           },
           ...(series
             ? [
@@ -1955,181 +1941,10 @@ function TaskDetail({
             )}
           </p>
         )}
-        <details
-          className="task-card-disclosure"
-          open={calendarDates ? true : undefined}
-        >
-          <summary>
-            <CalendarDays size={16} />
-            <span>{t("Dates & reminders")}</span>
-            <span className="task-card-summary">
-              {draft.due_kind === "none" ? t("No date") : draft.due_date || ""}
-            </span>
-            <ChevronDown size={15} />
-          </summary>
-          <div className="task-card-disclosure-body">
-            {calendarDates || (
-              <>
-                <label>
-                  {t("Natural date")}
-                  <div className="inline-input">
-                    <input
-                      placeholder="明天下午 3 点 / 下周五"
-                      value={natural}
-                      onChange={(e) => setNatural(e.target.value)}
-                    />
-                    <button
-                      onClick={() =>
-                        void act(async () => {
-                          const parsed = await api<TaskPatch>(
-                            "parseDate",
-                            natural,
-                          );
-                          setDraft((d) => ({
-                            ...d,
-                            due_kind: parsed.due_kind,
-                            due_date: parsed.due_date,
-                            due_at: parsed.due_at,
-                            time_zone: parsed.time_zone,
-                          }));
-                        })
-                      }
-                    >
-                      {t("Parse")}
-                    </button>
-                  </div>
-                </label>
-                <label>
-                  {t("Due date")}
-                  <select
-                    value={draft.due_kind}
-                    onChange={(e) =>
-                      setDraft((d) => ({
-                        ...d,
-                        due_kind: e.target.value as Task["due_kind"],
-                        due_date: d.due_date || localDay(zone),
-                      }))
-                    }
-                  >
-                    <option value="none">{t("No date")}</option>
-                    <option value="date">{t("Date only")}</option>
-                    <option value="datetime">{t("Date & time")}</option>
-                  </select>
-                </label>
-                {draft.due_kind === "date" && (
-                  <input
-                    type="date"
-                    aria-label="Due calendar date"
-                    value={draft.due_date || ""}
-                    onChange={(e) => set("due_date", e.target.value)}
-                  />
-                )}
-                {draft.due_kind === "datetime" && (
-                  <>
-                    <label>
-                      {t("Date & time")}
-                      <input
-                        type="datetime-local"
-                        value={
-                          draft.due_at
-                            ? DateTime.fromISO(draft.due_at)
-                                .setZone(draft.time_zone || zone)
-                                .toFormat("yyyy-MM-dd'T'HH:mm")
-                            : ""
-                        }
-                        onChange={(e) => {
-                          const dt = DateTime.fromISO(e.target.value, {
-                            zone: draft.time_zone || zone,
-                          });
-                          setDraft((d) => ({
-                            ...d,
-                            due_at: dt.toUTC().toISO(),
-                            due_date: dt.toISODate(),
-                            time_zone: d.time_zone || zone,
-                          }));
-                        }}
-                      />
-                    </label>
-                    <label>
-                      {t("Timezone (IANA)")}
-                      <input
-                        value={draft.time_zone || zone}
-                        onChange={(e) =>
-                          setDraft((d) => ({
-                            ...d,
-                            time_zone: e.target.value,
-                            due_date:
-                              d.due_at &&
-                              DateTime.fromISO(d.due_at).setZone(e.target.value)
-                                .isValid
-                                ? DateTime.fromISO(d.due_at)
-                                    .setZone(e.target.value)
-                                    .toISODate()
-                                : d.due_date,
-                          }))
-                        }
-                      />
-                    </label>
-                  </>
-                )}
-                <div className="form-grid">
-                  <label>
-                    {t("Planned date")}
-                    <input
-                      type="date"
-                      value={draft.planned_date || ""}
-                      onChange={(e) => set("planned_date", e.target.value)}
-                    />
-                  </label>
-                  <label>
-                    {t("Reminder")}
-                    <input
-                      aria-label="Reminder"
-                      type="datetime-local"
-                      value={
-                        draft.reminder_at
-                          ? DateTime.fromISO(draft.reminder_at)
-                              .setZone(draft.time_zone || zone)
-                              .toFormat("yyyy-MM-dd'T'HH:mm")
-                          : ""
-                      }
-                      onChange={(e) =>
-                        set(
-                          "reminder_at",
-                          e.target.value
-                            ? DateTime.fromISO(e.target.value, {
-                                zone: draft.time_zone || zone,
-                              })
-                                .toUTC()
-                                .toISO()
-                            : null,
-                        )
-                      }
-                    />
-                  </label>
-                </div>
-              </>
-            )}
-          </div>
-        </details>
-        <details className="task-card-disclosure">
-          <summary>
-            <Hash size={16} />
-            <span>{t("Tags")}</span>
-            <span className="task-card-summary">
-              {task.tags.length ? task.tags.join(", ") : ""}
-            </span>
-            <ChevronDown size={15} />
-          </summary>
-          <div className="task-card-disclosure-body">
-            <input
-              aria-label={t("Tags")}
-              placeholder={t("Comma separated")}
-              value={tagText}
-              onChange={(event) => setTagText(event.target.value)}
-            />
-          </div>
-        </details>
+        <TaskTiming value={draft} zone={series?.tzid || zone} isZh={t("General") === "通用"} requireDate={!!series}
+          onChange={patch => setDraft(previous => ({ ...previous, ...patch }))} />
+        <TaskTags value={draft.tags || []} suggestions={data.tasks.flatMap(item => item.tags)}
+          isZh={t("General") === "通用"} onChange={tags => set("tags", tags)} />
         {!task.parent_id && (
           <details
             className="task-card-disclosure"
@@ -2486,6 +2301,7 @@ function SettingsDialog({
             [
               ["appearance", "Appearance", Sun],
               ["general", "General", SettingsIcon],
+              ["notifications", "Notifications", Bell],
               ["ai", "AI connection", Sparkles],
               ["data", "Data management", Layers],
             ] as const
@@ -2619,6 +2435,9 @@ function SettingsDialog({
                 "Reminders work while Telldo is running, including in the tray. They are not guaranteed after Quit.",
               )}
             </p>
+          </div>
+          <div className="settings-page" hidden={section !== "notifications"}>
+            <NotificationSettings draft={draft} change={setDraft} isZh={t("General") === "通用"} />
           </div>
           <div className="settings-page" hidden={section !== "ai"}>
             <h3>{t("AI connection")}</h3>

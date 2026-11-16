@@ -1231,9 +1231,9 @@ code {
   color: #b3625d;
 }
 .calendar-card.completed {
-  color: #9aa3b4;
+  color: var(--faint);
   text-decoration: line-through;
-  background: #f0f2f6;
+  background: var(--subtle);
 }
 .calendar-more {
   font-size: 11px;
@@ -1290,7 +1290,12 @@ code {
   justify-content: flex-start;
   text-align: left;
   padding: 9px;
-  background: #f0f3fa;
+  background: var(--subtle);
+  color: var(--text);
+}
+.calendar-agenda-item:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 .calendar-agenda form {
   display: flex;
